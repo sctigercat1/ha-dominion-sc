@@ -1,0 +1,116 @@
+{
+    "config": {
+        "abort": {
+            "already_configured": "Service is already configured",
+            "reauth_successful": "Re-authentication was successful"
+        },
+        "error": {
+            "cannot_connect": "Failed to connect",
+            "invalid_auth": "Invalid authentication",
+            "invalid_tfa_code": "The security code is incorrect. Please try again."
+        },
+        "step": {
+            "reauth_confirm": {
+                "data": {
+                    "password": "Password",
+                    "username": "Username"
+                },
+                "data_description": {
+                    "password": "The password for your utility account",
+                    "username": "The username for your utility account"
+                },
+                "title": "Authentication expired for {name}"
+            },
+            "tfa_code": {
+                "data": {
+                    "tfa_code": "Security code"
+                },
+                "data_description": {
+                    "tfa_code": "Typically a 6-digit code"
+                },
+                "description": "Please enter the security code below to complete login.",
+                "title": "Enter security code"
+            },
+            "tfa_options": {
+                "data": {
+                    "tfa_method": "TFA method"
+                },
+                "data_description": {
+                    "tfa_method": "How to receive your security code"
+                },
+                "description": "Your account requires two-factor authentication (TFA). Select a method to receive your security code.",
+                "title": "Two-factor authentication"
+            },
+            "user": {
+                "data": {
+                    "password": "Password",
+                    "username": "Username"
+                },
+                "data_description": {
+                    "password": "The password for your utility account",
+                    "username": "The username for your utility account"
+                },
+                "title": "Enter credentials"
+            }
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "Cost Calculation Settings",
+                "description": "Select how energy costs are calculated.",
+                "data": {
+                    "cost_mode": "Cost calculation method"
+                },
+                "data_description": {
+                    "cost_mode": "How to calculate energy costs"
+                }
+            },
+          "fixed_rate": {
+              "title": "Fixed Rate Settings",
+              "description": "Enter the fixed rate applied to all usage.",
+              "data": {
+                  "fixed_rate": "Fixed rate ($/kWh)"
+              },
+              "data_description": {
+                  "fixed_rate": "Single rate applied to all kWh consumed"
+              }
+          },
+          "rate8": {
+              "title": "Rate 8 - Residential Service",
+              "description": "Costs will be calculated using Dominion Energy SC {schedule_name}, effective {effective_date}.\n\nBasic Facilities Charge: {basic_charge}/month\nTier Boundary: First {tier_boundary}, then excess usage\n\nSummer (May-Sep): First 800 kWh @ $0.14599/kWh, over 800 @ $0.15983/kWh\nWinter (Oct-Apr): First 800 kWh @ $0.14599/kWh, over 800 @ $0.14045/kWh\n\nNo additional configuration is needed.",
+              "submit": "Confirm"
+          },
+          "rate6": {
+              "title": "Rate 6 - Energy Saver / Conservation",
+              "description": "Costs will be calculated using Dominion Energy SC {schedule_name}, effective {effective_date}.\n\nBasic Facilities Charge: {basic_charge}/month\nTier Boundary: First {tier_boundary}, then excess usage\n\nSummer (May-Sep): First 800 kWh @ $0.14164/kWh, over 800 @ $0.15505/kWh\nWinter (Oct-Apr): First 800 kWh @ $0.14164/kWh, over 800 @ $0.13628/kWh\n\nNote: This rate requires meeting energy efficiency requirements. See your Dominion Energy SC documentation for details.\n\nNo additional configuration is needed.",
+              "submit": "Confirm"
+          }
+      }
+  },
+    "entity": {
+        "sensor": {
+            "cost_to_date": {
+                "name": "Current bill cost to date"
+            },
+            "end_date": {
+                "name": "Current bill end date"
+            },
+            "forecasted_cost": {
+                "name": "Current bill forecasted cost"
+            },
+            "last_changed": {
+                "name": "Last Published"
+            },
+            "last_updated": {
+                "name": "Last Checked"
+            },
+            "start_date": {
+                "name": "Current bill start date"
+            },
+            "typical_cost": {
+                "name": "Typical monthly cost"
+            }
+        }
+    }
+}

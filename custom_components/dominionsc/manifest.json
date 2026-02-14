@@ -1,0 +1,14 @@
+{
+  "domain": "dominionsc",
+  "name": "Dominion Energy SC",
+  "codeowners": ["@sctigercat1"],
+  "config_flow": true,
+  "dependencies": ["recorder"],
+  "documentation": "https://www.github.com/sctigercat1/ha-dominion-sc",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://www.github.com/sctigercat1/ha-dominion-sc/issues",
+  "loggers": ["dominionsc"],
+  "requirements": ["git+https://github.com/sctigercat1/dominion-sc-power.git@master#dominion-sc-power"],
+  "version": "0.0.1"
+}
