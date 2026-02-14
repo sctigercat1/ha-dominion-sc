@@ -50,7 +50,7 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
-.ruff_cache
+.ruff_cache/
 
 # Translations
 *.mo
@@ -129,6 +129,10 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# OS
+.DS_Store
+Thumbs.db
 
 # Home Assistant configuration
 config/*
