@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Test script for Home Assistant Unraid Integration
+# Runs pytest with coverage
+
+set -e
+
+cd "$(dirname "$0")/.."
+
+# Activate virtual environment if it exists
+if [ -f .venv/bin/activate ]; then
+    source .venv/bin/activate
+fi
+
+# Possible hack: temporarily create __init__.py file in custom_components
+touch custom_components/__init__.py
+
+echo "🧪 Running tests with coverage..."
+pytest \
+    --cov=custom_components.dominionsc \
+    --cov-report=term-missing \
+    --cov-report=html \
+    -v \
+    "$@"
+
+rm custom_components/__init__.py
+
+echo ""
+echo "✅ Tests complete!"
+echo "📊 Coverage report: htmlcov/index.html"

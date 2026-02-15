@@ -214,18 +214,18 @@ class DominionSCConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             self._data.update(user_input)
-        try:
-            await _validate_login(self.hass, self._data)
-        except MfaChallenge as exc:
-            self.tfa_handler = exc.handler
-            _LOGGER.debug("API: async_step_tfa_options")
-            return await self.async_step_tfa_options()
-        except InvalidAuth:
-            errors["base"] = "invalid_auth"
-        except CannotConnect:
-            errors["base"] = "cannot_connect"
-        else:
-            return self.async_update_reload_and_abort(reauth_entry, data=self._data)
+
+            try:
+                await _validate_login(self.hass, self._data)
+            except MfaChallenge as exc:
+                self.tfa_handler = exc.handler
+                return await self.async_step_tfa_options()
+            except InvalidAuth:
+                errors["base"] = "invalid_auth"
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+            else:
+                return self.async_update_reload_and_abort(reauth_entry, data=self._data)
 
         schema_dict: VolDictType = {
             vol.Required(CONF_USERNAME): str,
@@ -257,21 +257,15 @@ class DominionSCOptionsFlow(OptionsFlow):
         if user_input is not None:
             self._selected_mode = user_input[CONF_COST_MODE]
 
-            if self._selected_mode == COST_MODE_NONE:
-                # No cost calculation - create entry immediately
-                return self.async_create_entry(
-                    title="", data={CONF_COST_MODE: COST_MODE_NONE}
-                )
             if self._selected_mode == COST_MODE_FIXED:
                 return await self.async_step_fixed_rate()
             if self._selected_mode == COST_MODE_RATE_8:
                 return await self.async_step_rate8()
             if self._selected_mode == COST_MODE_RATE_6:
                 return await self.async_step_rate6()
-
-            # Should not reach here, but handle gracefully
+            # No cost calculation - create entry immediately
             return self.async_create_entry(
-                title="", data={CONF_COST_MODE: COST_MODE_RATE_8}
+                title="", data={CONF_COST_MODE: COST_MODE_NONE}
             )
 
         current_options = self._config_entry.options
@@ -324,7 +318,7 @@ class DominionSCOptionsFlow(OptionsFlow):
             ),
         )
 
-    async def async_step_rate1(
+    async def async_step_rate8(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Step 2c: Confirm Rate 8 selection."""

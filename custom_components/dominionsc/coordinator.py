@@ -34,7 +34,6 @@ from dominionsc import (
 from dominionsc.exceptions import ApiException, CannotConnect, InvalidAuth, MfaChallenge
 
 from .const import (
-    #    BACKFILL_DAYS,
     CONF_COST_MODE,
     CONF_FIXED_RATE,
     CONF_LOGIN_DATA,

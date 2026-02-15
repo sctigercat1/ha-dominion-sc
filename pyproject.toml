@@ -1,0 +1,110 @@
+[project]
+name = "ha-dominion-sc"
+version = "0.0.1"
+description = "Home Assistant integration for Dominion Energy SC "
+readme = "README.md"
+requires-python = ">=3.13.2"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "sctigercat1"}
+]
+keywords = ["home-assistant", "energy", "custom-integration"]
+dependencies = [
+    "homeassistant>=2025.6.3",
+    "dominion-sc-power@git+https://github.com/sctigercat1/dominion-sc-power.git@master",
+]
+
+[project.optional-dependencies]
+dev = [
+    # Linting and formatting
+    "ruff>=0.14.14",
+
+    # Testing
+    "pytest>=9.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=7.0.0",
+    "pytest-homeassistant-custom-component>=0.13.0",
+    #"pytest-timeout>=2.4.0",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "ALL",
+]
+ignore = [
+    "ANN401",
+    "D203",
+    "D212",
+    "COM812",
+    "ISC001",
+    "TC002",
+    "TC003",
+    "S101",
+    "ERA001",
+    "TRY400",
+    "FBT003",
+    "PLR0913",
+    "PLR0912",
+    "PLR0915",
+    "SIM102",
+    "PLR2004",
+    "ARG002",
+    "ARG001",
+    "DTZ011",
+    "PLE1205",
+]
+
+[tool.ruff.lint.flake8-pytest-style]
+fixture-parentheses = false
+
+[tool.ruff.lint.pyupgrade]
+keep-runtime-typing = true
+
+[tool.ruff.lint.mccabe]
+max-complexity = 25
+
+[tool.pytest.ini_options]
+pythonpath = ["."] 
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--cov=custom_components.dominionsc",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["custom_components/dominionsc"]
+omit = [
+    "tests/*",
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]

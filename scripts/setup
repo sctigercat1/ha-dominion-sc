@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Setup development environment
+
+set -e
+
+cd "$(dirname "$0")/.."
+
+# Has this already been done?
+if [[ -z "$VIRTUAL_ENV" ]]; then
+    echo "No VIRTUAL_ENV set"
+else
+    echo "VIRTUAL_ENV is set"
+    exit 1
+fi
+
+# Virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Dependencies
+python -m pip install --upgrade pip
+python -m pip install ".[dev]"
+
+echo ""
+echo "✅ Setup complete!"
+echo ""
+echo "Available commands:"
+echo "  ./scripts/lint        - Run linters and formatters"
+echo "  ./scripts/test        - Run test suite"
+echo ""
+echo "Virtual environment: .venv/"
+echo "To activate: source .venv/bin/activate"

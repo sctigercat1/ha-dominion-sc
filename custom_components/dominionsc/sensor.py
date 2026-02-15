@@ -26,6 +26,9 @@ from .coordinator import (
     DominionSCCoordinator,
 )
 
+# Coordinator is used to centralize the data updates
+PARALLEL_UPDATES = 0
+
 
 @dataclass(frozen=True, kw_only=True)
 class DominionSCEntityDescription(SensorEntityDescription):
@@ -56,6 +59,7 @@ BILLING_SENSORS: tuple[DominionSCEntityDescription, ...] = (
         key="cost_to_date",
         translation_key="cost_to_date",
         device_class=SensorDeviceClass.MONETARY,
+        entity_category=EntityCategory.DIAGNOSTIC,
         native_unit_of_measurement="USD",
         state_class=SensorStateClass.TOTAL,
         suggested_display_precision=2,
@@ -65,6 +69,7 @@ BILLING_SENSORS: tuple[DominionSCEntityDescription, ...] = (
         key="forecasted_cost",
         translation_key="forecasted_cost",
         device_class=SensorDeviceClass.MONETARY,
+        entity_category=EntityCategory.DIAGNOSTIC,
         native_unit_of_measurement="USD",
         state_class=SensorStateClass.TOTAL,
         suggested_display_precision=2,
@@ -74,6 +79,7 @@ BILLING_SENSORS: tuple[DominionSCEntityDescription, ...] = (
         key="typical_cost",
         translation_key="typical_cost",
         device_class=SensorDeviceClass.MONETARY,
+        entity_category=EntityCategory.DIAGNOSTIC,
         native_unit_of_measurement="USD",
         state_class=SensorStateClass.TOTAL,
         suggested_display_precision=2,
@@ -84,7 +90,7 @@ BILLING_SENSORS: tuple[DominionSCEntityDescription, ...] = (
         translation_key="start_date",
         device_class=SensorDeviceClass.DATE,
         entity_category=EntityCategory.DIAGNOSTIC,
-        # entity_registry_enabled_default=False,
+        entity_registry_enabled_default=False,
         value_fn=lambda data: data.forecast.start_date if data.forecast else None,
     ),
     DominionSCEntityDescription(
@@ -92,7 +98,7 @@ BILLING_SENSORS: tuple[DominionSCEntityDescription, ...] = (
         translation_key="end_date",
         device_class=SensorDeviceClass.DATE,
         entity_category=EntityCategory.DIAGNOSTIC,
-        # entity_registry_enabled_default=False,
+        entity_registry_enabled_default=False,
         value_fn=lambda data: data.forecast.end_date if data.forecast else None,
     ),
 )
