@@ -2,7 +2,7 @@
 
 from unittest.mock import AsyncMock, patch
 
-from dominionsc.exceptions import CannotConnect, InvalidAuth, MfaChallenge
+from dominionsc.exceptions import ApiException, CannotConnect, InvalidAuth, MfaChallenge
 from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
@@ -69,7 +69,7 @@ async def test_user_flow_invalid_auth(
 
     with patch(
         "custom_components.dominionsc.config_flow._validate_login",
-        side_effect=InvalidAuth,
+        side_effect=InvalidAuth("Invalid credentials"),
     ):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
@@ -93,7 +93,7 @@ async def test_user_flow_cannot_connect(
 
     with patch(
         "custom_components.dominionsc.config_flow._validate_login",
-        side_effect=CannotConnect,
+        side_effect=CannotConnect("Connection error"),
     ):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
@@ -103,6 +103,30 @@ async def test_user_flow_cannot_connect(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
     assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def test_user_flow_api_exception(
+    hass: HomeAssistant,
+    mock_dominionsc_api: AsyncMock,
+    user_input: dict,
+) -> None:
+    """Test user flow with API exception."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    with patch(
+        "custom_components.dominionsc.config_flow._validate_login",
+        side_effect=ApiException("API error", "https://test.com"),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input,
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
+    assert result["errors"] == {"base": "unknown"}
 
 
 async def test_user_flow_with_tfa(
@@ -170,7 +194,9 @@ async def test_tfa_options_cannot_connect(
             user_input,
         )
 
-    mock_tfa_handler.async_select_tfa_option.side_effect = CannotConnect
+    mock_tfa_handler.async_select_tfa_option.side_effect = CannotConnect(
+        "Connection error"
+    )
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
@@ -180,6 +206,70 @@ async def test_tfa_options_cannot_connect(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "tfa_options"
     assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def test_tfa_options_api_exception(
+    hass: HomeAssistant,
+    mock_dominionsc_api: AsyncMock,
+    mock_tfa_handler: AsyncMock,
+    user_input: dict,
+) -> None:
+    """Test TFA options step with API exception."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    with patch(
+        "custom_components.dominionsc.config_flow._validate_login",
+        side_effect=MfaChallenge("TFA Required", mock_tfa_handler),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input,
+        )
+
+    mock_tfa_handler.async_select_tfa_option.side_effect = ApiException(
+        "API error", "https://test.com"
+    )
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_TFA_METHOD: "sms"},
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "tfa_options"
+    assert result["errors"] == {"base": "unknown"}
+
+
+async def test_tfa_options_get_options_api_exception(
+    hass: HomeAssistant,
+    mock_dominionsc_api: AsyncMock,
+    mock_tfa_handler: AsyncMock,
+    user_input: dict,
+) -> None:
+    """Test TFA options step with API exception when getting options."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    mock_tfa_handler.async_get_tfa_options.side_effect = ApiException(
+        "API error", "https://test.com"
+    )
+
+    with patch(
+        "custom_components.dominionsc.config_flow._validate_login",
+        side_effect=MfaChallenge("TFA Required", mock_tfa_handler),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input,
+        )
+
+    # Should show error form instead of proceeding to tfa_code
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "tfa_options"
+    assert result["errors"] == {"base": "unknown"}
 
 
 async def test_tfa_code_invalid(
@@ -207,7 +297,7 @@ async def test_tfa_code_invalid(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "tfa_code"
 
-    mock_tfa_handler.async_submit_tfa_code.side_effect = InvalidAuth
+    mock_tfa_handler.async_submit_tfa_code.side_effect = InvalidAuth("Invalid TFA code")
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
@@ -243,7 +333,9 @@ async def test_tfa_code_cannot_connect(
 
     assert result["type"] is FlowResultType.FORM
 
-    mock_tfa_handler.async_submit_tfa_code.side_effect = CannotConnect
+    mock_tfa_handler.async_submit_tfa_code.side_effect = CannotConnect(
+        "Connection error"
+    )
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
@@ -253,6 +345,44 @@ async def test_tfa_code_cannot_connect(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "tfa_code"
     assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def test_tfa_code_api_exception(
+    hass: HomeAssistant,
+    mock_dominionsc_api: AsyncMock,
+    mock_tfa_handler: AsyncMock,
+    user_input: dict,
+) -> None:
+    """Test TFA code step with API exception."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    mock_tfa_handler.async_get_tfa_options.return_value = []
+
+    with patch(
+        "custom_components.dominionsc.config_flow._validate_login",
+        side_effect=MfaChallenge("TFA Required", mock_tfa_handler),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input,
+        )
+
+    assert result["type"] is FlowResultType.FORM
+
+    mock_tfa_handler.async_submit_tfa_code.side_effect = ApiException(
+        "API error", "https://test.com"
+    )
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_TFA_CODE: "123456"},
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "tfa_code"
+    assert result["errors"] == {"base": "unknown"}
 
 
 async def test_duplicate_entry(
@@ -332,7 +462,7 @@ async def test_reauth_flow_invalid_auth(
 
     with patch(
         "custom_components.dominionsc.config_flow._validate_login",
-        side_effect=InvalidAuth,
+        side_effect=InvalidAuth("Invalid credentials"),
     ):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
@@ -361,7 +491,7 @@ async def test_reauth_flow_cannot_connect(
 
     with patch(
         "custom_components.dominionsc.config_flow._validate_login",
-        side_effect=CannotConnect,
+        side_effect=CannotConnect("Connection error"),
     ):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
@@ -371,6 +501,35 @@ async def test_reauth_flow_cannot_connect(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "reauth_confirm"
     assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def test_reauth_flow_api_exception(
+    hass: HomeAssistant,
+    mock_dominionsc_api: AsyncMock,
+    user_input: dict,
+) -> None:
+    """Test reauth flow with API exception."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data=user_input,
+        title="Test",
+    )
+    entry.add_to_hass(hass)
+
+    result = await entry.start_reauth_flow(hass)
+
+    with patch(
+        "custom_components.dominionsc.config_flow._validate_login",
+        side_effect=ApiException("API error", "https://test.com"),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input,
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reauth_confirm"
+    assert result["errors"] == {"base": "unknown"}
 
 
 async def test_reauth_flow_with_tfa(
@@ -561,8 +720,6 @@ async def test_reauth_confirm_no_input(
     result = await entry.start_reauth_flow(hass)
 
     # Manually trigger the confirm step with NO input
-    # result["flow_id"] should be at reauth_confirm because async_step_reauth
-    # already showed that form.
     with patch("custom_components.dominionsc.config_flow._validate_login"):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],

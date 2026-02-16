@@ -20,6 +20,7 @@ from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.typing import VolDictType
 
 from dominionsc import (
+    ApiException,
     CannotConnect,
     DominionSC,
     DominionSCTFAHandler,
@@ -106,6 +107,9 @@ class DominionSCConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             except CannotConnect:
                 errors["base"] = "cannot_connect"
+            except ApiException as err:
+                _LOGGER.error("API structure error during login: %s", err)
+                errors["base"] = "unknown"
             else:
                 return self._async_create_dominionsc_entry(self._data)
 
@@ -136,11 +140,27 @@ class DominionSCConfigFlow(ConfigFlow, domain=DOMAIN):
                 await self.tfa_handler.async_select_tfa_option(method)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
+            except ApiException as err:
+                _LOGGER.error(
+                    "API structure error during TFA option selection: %s", err
+                )
+                errors["base"] = "unknown"
             else:
                 return await self.async_step_tfa_code()
 
         _LOGGER.debug("API: async_get_tfa_options")
-        tfa_options = await self.tfa_handler.async_get_tfa_options()
+        try:
+            tfa_options = await self.tfa_handler.async_get_tfa_options()
+        except ApiException as err:
+            _LOGGER.error("API structure error getting TFA options: %s", err)
+            errors["base"] = "unknown"
+            # Show error to user instead of proceeding
+            return self.async_show_form(
+                step_id="tfa_options",
+                data_schema=vol.Schema({}),
+                errors=errors,
+            )
+
         if not tfa_options:
             return await self.async_step_tfa_code()
         return self.async_show_form(
@@ -167,6 +187,9 @@ class DominionSCConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_tfa_code"
             except CannotConnect:
                 errors["base"] = "cannot_connect"
+            except ApiException as err:
+                _LOGGER.error("API structure error during TFA code submission: %s", err)
+                errors["base"] = "unknown"
             else:
                 self._data[CONF_LOGIN_DATA] = login_data
                 if self.source == SOURCE_REAUTH:
@@ -224,6 +247,9 @@ class DominionSCConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             except CannotConnect:
                 errors["base"] = "cannot_connect"
+            except ApiException as err:
+                _LOGGER.error("API structure error during reauth: %s", err)
+                errors["base"] = "unknown"
             else:
                 return self.async_update_reload_and_abort(reauth_entry, data=self._data)
 

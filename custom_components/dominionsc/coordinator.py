@@ -138,18 +138,20 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
         except CannotConnect as err:
             _LOGGER.error("Error during login: %s", err)
             raise UpdateFailed from err
-
-        try:
-            accounts_full = await self.api.async_get_accounts()
-            accounts = accounts_full[0]
-            service_addr_account_no = accounts_full[1]
         except ApiException as err:
-            _LOGGER.error("Error getting accounts: %s", err)
+            _LOGGER.error("Error during login: %s", err)
             raise
+
+        accounts_full = await self.api.async_get_accounts()
+        accounts = accounts_full[0]
+        service_addr_account_no = accounts_full[1]
 
         try:
             _LOGGER.debug("API: async_get_forecast")
             forecast = await self.api.async_get_forecast()
+        except CannotConnect as err:
+            _LOGGER.error("Error getting forecast: %s", err)
+            raise UpdateFailed from err
         except ApiException as err:
             _LOGGER.error("Error getting forecast: %s", err)
             raise
@@ -502,6 +504,9 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
             usage_reads = await self.api.async_get_usage_reads(
                 metadata.account, start, end
             )
+        except CannotConnect as err:
+            _LOGGER.warning("Could not fetch statistics data: %s", err)
+            return
         except ApiException as err:
             _LOGGER.warning("Could not fetch statistics data: %s", err)
             return
