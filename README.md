@@ -188,7 +188,7 @@ After each change, please run the following scripts to format/check your code wi
 
 ## Credits
 
-This project was inspired by [Opower](https://www.home-assistant.io/integrations/opower/), [ha-dominion-energy](https://github.com/YeomansIII/ha-dominion-energy), and [ha-unraid](https://github.com/ruaan-deysel/ha-unraid). Much appreciated!
+This project was inspired by [Opower](https://www.home-assistant.io/integrations/opower/), [ha-dominion-energy](https://github.com/YeomansIII/ha-dominion-energy), [ha-unraid](https://github.com/ruaan-deysel/ha-unraid), and [integration_blueprint](https://github.com/ludeeus/integration_blueprint). Much appreciated!
 
 Special thanks also to the Home Assistant and HACS communities.
 
