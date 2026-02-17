@@ -11,7 +11,7 @@ authors = [
 keywords = ["home-assistant", "energy", "custom-integration"]
 dependencies = [
     "homeassistant>=2025.6.3",
-    "dominion-sc-power@git+https://github.com/sctigercat1/dominion-sc-power.git@master",
+    "dominion-sc-power==0.0.1",
 ]
 
 [project.optional-dependencies]

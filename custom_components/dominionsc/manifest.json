@@ -9,6 +9,7 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://www.github.com/sctigercat1/ha-dominion-sc/issues",
   "loggers": ["dominionsc"],
-  "requirements": ["git+https://github.com/sctigercat1/dominion-sc-power.git@master#dominion-sc-power"],
+  "quality_scale": "bronze",
+  "requirements": ["dominion-sc-power==0.0.1"],
   "version": "0.0.1"
 }
