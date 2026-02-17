@@ -24,7 +24,6 @@ from dominionsc import (
     CannotConnect,
     DominionSC,
     DominionSCTFAHandler,
-    DominionSCUtility,
     InvalidAuth,
     MfaChallenge,
     create_cookie_jar,
@@ -57,7 +56,6 @@ async def _validate_login(
     """Validate login data and raise exceptions on failure."""
     api = DominionSC(
         async_create_clientsession(hass, cookie_jar=create_cookie_jar()),
-        DominionSCUtility(),
         data[CONF_USERNAME],
         data[CONF_PASSWORD],
         data.get(CONF_LOGIN_DATA),

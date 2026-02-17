@@ -26,7 +26,6 @@ from homeassistant.util.unit_conversion import EnergyConverter, VolumeConverter
 
 from dominionsc import (
     DominionSC,
-    DominionSCUtility,
     Forecast,
     UsageRead,
     create_cookie_jar,
@@ -102,7 +101,6 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
         )
         self.api = DominionSC(
             async_create_clientsession(hass, cookie_jar=create_cookie_jar()),
-            DominionSCUtility(),
             config_entry.data[CONF_USERNAME],
             config_entry.data[CONF_PASSWORD],
             config_entry.data.get(CONF_LOGIN_DATA),
