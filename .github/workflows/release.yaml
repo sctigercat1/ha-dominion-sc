@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@master
         with:
           fetch-depth: 0
 
@@ -55,6 +55,8 @@ jobs:
             echo "exists=false" >> $GITHUB_OUTPUT
             echo "Tag $TAG does not exist"
           fi
+          
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
 
       - name: Create and push tag
         if: steps.check_tag.outputs.exists == 'false'
@@ -77,23 +79,31 @@ jobs:
             echo "Created and pushed tag $TAG from manifest.json version." >> $GITHUB_STEP_SUMMARY
             echo "Release workflow will trigger from the tag push." >> $GITHUB_STEP_SUMMARY
           fi
+        
+    outputs:
+      output_tag_exists: ${{ steps.check_tag.outputs.exists }}
+      output_tag: ${{ steps.check_tag.outputs.tag }}
 
   release:
     name: Build and Release
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    needs: auto_tag
+    if: needs.auto_tag.outputs.output_tag_exists == 'false'
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@master
         with:
           fetch-depth: 0
 
       - name: Extract version from tag
         id: version
+        env:
+          OUTPUT_TAG: ${{needs.auto_tag.outputs.output_tag}}
         run: |
           # Extract version from tag (e.g., v0.0.1 -> 0.0.1)
-          VERSION=${GITHUB_REF#refs/tags/v}
+          #VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION="${OUTPUT_TAG:1}" # Remove leading v
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
 
@@ -250,6 +260,7 @@ jobs:
           prerelease: ${{ steps.version.outputs.prerelease }}
           draft: false
           token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{needs.auto_tag.outputs.output_tag}}
 
       - name: Release Summary
         run: |
