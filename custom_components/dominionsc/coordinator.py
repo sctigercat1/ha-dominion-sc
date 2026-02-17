@@ -67,7 +67,6 @@ class DominionSCAccountData:
 
     account: str
     last_changed: datetime | None
-    last_updated: datetime
 
 
 @dataclass
@@ -77,6 +76,7 @@ class DominionSCData:
     accounts: dict[str, DominionSCAccountData]
     forecast: Forecast | None
     service_addr_account_no: str
+    last_updated: datetime
 
 
 class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
@@ -167,7 +167,6 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
             account: DominionSCAccountData(
                 account=account,
                 last_changed=last_changed_per_account.get(account),
-                last_updated=dt_util.utcnow(),
             )
             for account in accounts
         }
@@ -177,6 +176,7 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
             accounts=account_data,
             forecast=forecast,
             service_addr_account_no=service_addr_account_no,
+            last_updated=dt_util.utcnow(),
         )
 
     def _calculate_interval_cost(

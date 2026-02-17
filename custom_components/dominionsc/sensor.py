@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
+import re
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -34,7 +35,7 @@ PARALLEL_UPDATES = 0
 class DominionSCEntityDescription(SensorEntityDescription):
     """Class describing dominionsc sensors entities."""
 
-    value_fn: Callable[[DominionSCAccountData], str | float | date | datetime | None]
+    value_fn: Callable[[DominionSCAccountData | DominionSCData], str | float | date | datetime | None]
 
 
 ACCOUNT_SENSORS: tuple[DominionSCEntityDescription, ...] = (
@@ -44,13 +45,6 @@ ACCOUNT_SENSORS: tuple[DominionSCEntityDescription, ...] = (
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda data: data.last_changed,
-    ),
-    DominionSCEntityDescription(
-        key="last_updated",
-        translation_key="last_updated",
-        device_class=SensorDeviceClass.TIMESTAMP,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda data: data.last_updated,
     ),
 )
 
@@ -101,6 +95,13 @@ BILLING_SENSORS: tuple[DominionSCEntityDescription, ...] = (
         entity_registry_enabled_default=False,
         value_fn=lambda data: data.forecast.end_date if data.forecast else None,
     ),
+    DominionSCEntityDescription(
+        key="last_updated",
+        translation_key="last_updated",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: data.last_updated,
+    ),
 )
 
 
@@ -117,18 +118,19 @@ async def async_setup_entry(
     accounts_data = dominionsc_data.accounts
     forecast = dominionsc_data.forecast
     service_addr_account_no = dominionsc_data.service_addr_account_no
-
-    # Create sensors for each account (electric/gas)
+    clean_service_addr = re.sub(r'[\W]+|^(?=\d)', '_', service_addr_account_no).strip('_').lower()
+    
+    # Device per service address
+    device_id = f"{DOMAIN}_{clean_service_addr}"
+    device = DeviceInfo(
+        identifiers={(DOMAIN, device_id)},
+        name=f"{service_addr_account_no}",
+        manufacturer="Dominion Energy SC",
+        entry_type=DeviceEntryType.SERVICE,
+    )
+    
+    # Account (electric/gas) sensors
     for account in accounts_data:
-        device_id = f"{DOMAIN}_{account}"
-        device = DeviceInfo(
-            identifiers={(DOMAIN, device_id)},
-            name=f"{service_addr_account_no} {account.title()} Account",
-            manufacturer="Dominion Energy SC",
-            model=account.title(),
-            entry_type=DeviceEntryType.SERVICE,
-        )
-
         entities.extend(
             DominionSCSensor(
                 coordinator,
@@ -141,23 +143,14 @@ async def async_setup_entry(
         )
 
     # Common billing sensors
-    if forecast is not None and service_addr_account_no is not None:
-        billing_device_id = f"{DOMAIN}_billing"
-        billing_device = DeviceInfo(
-            identifiers={(DOMAIN, billing_device_id)},
-            name=f"{service_addr_account_no} Billing Account",
-            manufacturer="Dominion Energy SC",
-            model="Billing",
-            entry_type=DeviceEntryType.SERVICE,
-        )
-
+    if forecast is not None:
         entities.extend(
             DominionSCSensor(
                 coordinator,
                 sensor,
                 "billing",
-                billing_device,
-                billing_device_id,
+                device,
+                device_id,
             )
             for sensor in BILLING_SENSORS
         )
@@ -182,8 +175,9 @@ class DominionSCSensor(CoordinatorEntity[DominionSCCoordinator], SensorEntity):
         """Initialize the sensor."""
         super().__init__(coordinator)
         self.entity_description = description
-        self._attr_unique_id = f"{device_id}_{description.key}"
+        self._attr_unique_id = f"{device_id}_{account}_{description.key}"
         self._attr_device_info = device
+        self._attr_translation_placeholders = {"account": account.title()}
         self.account = account
 
     @property
@@ -195,5 +189,5 @@ class DominionSCSensor(CoordinatorEntity[DominionSCCoordinator], SensorEntity):
         if self.account == "billing":
             return self.entity_description.value_fn(coordinator_data)
 
-        # Account specifiv sensors
+        # Account specific sensors
         return self.entity_description.value_fn(coordinator_data.accounts[self.account])

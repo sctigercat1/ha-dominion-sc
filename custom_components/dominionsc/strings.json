@@ -107,10 +107,10 @@
         "name": "Typical monthly cost"
       },
       "last_changed": {
-        "name": "Last Published"
+        "name": "{account} Latest Data"
       },
       "last_updated": {
-        "name": "Last Checked"
+        "name": "Last Polling"
       }
     }
   }
