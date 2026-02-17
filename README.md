@@ -73,13 +73,13 @@ This integration follows standard integration removal. No extra steps are requir
 
 The integration creates the following sensors:
 
-### Energy Source Sensors
+### Energy Source Sensors (per energy source, e.g. Electric)
 
-- **Last Published**: Timestamp of when energy data was last published to the Dominion Energy SC website
-- **Last Checked**: Timestamp of when the Dominion Energy SC website was last polled for data changes
+- **{Account} Latest Data** (e.g. "Electric Latest Data"): Timestamp of the most recent energy data interval received from Dominion Energy SC
 
-### Billing Sensors
+### Billing Sensors (per service address)
 
+- **Last Polling**: Timestamp of when the Dominion Energy SC website was last polled for energy source data changes
 - **Cost to Date**: Current billing cycle cost in USD
 - **Forecasted Cost**: Projected end-of-cycle cost in USD
 - **Typical Cost**: Historical average cost for comparison in USD
@@ -102,15 +102,15 @@ The integration provides three statistics for the Energy Dashboard:
 
 | Statistic | Description | Unit |
 |-----------|-------------|------|
-| `dominionsc:electric_consumption` | Hourly electric energy consumption | Wh |
-| `dominionsc:electric_cost` | Hourly electric energy cost | USD |
-| `dominionsc:gas_consumption` | Hourly gas consumption | ft³ |
+| `dominionsc:<your_service_address>_electric_energy_consumption` | Hourly electric consumption | Wh |
+| `dominionsc:<your_service_address>_electric_energy_cost` | Hourly electric cost | USD |
+| `dominionsc:<your_service_address>_gas_energy_consumption` | Hourly gas consumption | ft³ |
 
 **To add statistics to the Energy Dashboard:**
 
 1. Go to **Settings** → **Dashboards** → **Energy**
 2. Under **Electricity grid**, click **Add consumption**
-3. Search for your service address or "electric" / "gas"
+3. Search for your service address or "electric"
 4. Select the appropriate consumption statistic as described in the table above
 5. For cost tracking (optional), select **Use an entity tracking the total costs**
 6. Select the appropriate cost statistic
@@ -125,12 +125,12 @@ automation:
   - alias: "High Energy Cost Alert"
     trigger:
       - platform: numeric_state
-        entity_id: sensor.dominionsc_billing_forecasted_cost
+        entity_id: sensor.<your_service_address>_current_bill_forecasted_cost
         above: 150
     action:
       - service: notify.mobile_app
         data:
-          message: "Your forecasted energy cost is ${{ states('sensor.dominionsc_billing_forecasted_cost') }}"
+          message: "Your forecasted energy cost is ${{ states('sensor.<your_service_address>_current_bill_forecasted_cost') }}"
 ```
 
 ## Troubleshooting
