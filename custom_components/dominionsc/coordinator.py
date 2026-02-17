@@ -1,6 +1,7 @@
 """Coordinator to handle dominionsc connections."""
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from string import Template
@@ -229,7 +230,12 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
         """Insert DominionSC statistics."""
         last_changed_per_account: dict[str, datetime] = {}
         for account in accounts:
-            id_prefix = (f"DominionSC_{account}").lower().replace("-", "_")
+            clean_service_addr = (
+                re.sub(r"[\W]+|^(?=\d)", "_", service_addr_account_no)
+                .strip("_")
+                .lower()
+            )
+            id_prefix = (f"{clean_service_addr}_{account}").lower().replace("-", "_")
             consumption_statistic_id = f"{DOMAIN}:{id_prefix}_energy_consumption"
 
             cost_statistic_id = None
