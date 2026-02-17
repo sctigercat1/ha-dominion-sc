@@ -47,7 +47,7 @@ A Home Assistant custom integration for Dominion Energy South Carolina customers
 4. Enter your Dominion Energy SC account credentials:
    - **Username**: Your Dominion Energy SC online account username
    - **Password**: Your Dominion Energy SC online account password
-5. Complete two-factor authentication if prompted
+5. Complete two-factor authentication when prompted
    - **Recommended**: Use SMS-based verification for better reliability
 6. Select your cost tracking preferences:
    - **None**: No cost calculation
@@ -159,6 +159,7 @@ If you receive authentication errors:
 - **No Solar/Grid Export**: Energy provided back to the grid from sources like solar panels is not yet supported
 - **Historical Data**: Backfilling of data is limited to current billing cycle to allow for accurate cost calculation
 - **Cost Estimates**: Calculations are estimates based on selected rate schedule; actual bills may vary
+- **TFA Required**: The account must have TFA activated; flows are not supported for accounts without TFA
 
 ## Support
 
