@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
-import re
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -25,6 +25,7 @@ from .coordinator import (
     DominionSCAccountData,
     DominionSCConfigEntry,
     DominionSCCoordinator,
+    DominionSCData,
 )
 
 # Coordinator is used to centralize the data updates
@@ -35,7 +36,9 @@ PARALLEL_UPDATES = 0
 class DominionSCEntityDescription(SensorEntityDescription):
     """Class describing dominionsc sensors entities."""
 
-    value_fn: Callable[[DominionSCAccountData | DominionSCData], str | float | date | datetime | None]
+    value_fn: Callable[
+        [DominionSCAccountData | DominionSCData], str | float | date | datetime | None
+    ]
 
 
 ACCOUNT_SENSORS: tuple[DominionSCEntityDescription, ...] = (
@@ -118,8 +121,10 @@ async def async_setup_entry(
     accounts_data = dominionsc_data.accounts
     forecast = dominionsc_data.forecast
     service_addr_account_no = dominionsc_data.service_addr_account_no
-    clean_service_addr = re.sub(r'[\W]+|^(?=\d)', '_', service_addr_account_no).strip('_').lower()
-    
+    clean_service_addr = (
+        re.sub(r"[\W]+|^(?=\d)", "_", service_addr_account_no).strip("_").lower()
+    )
+
     # Device per service address
     device_id = f"{DOMAIN}_{clean_service_addr}"
     device = DeviceInfo(
@@ -128,7 +133,7 @@ async def async_setup_entry(
         manufacturer="Dominion Energy SC",
         entry_type=DeviceEntryType.SERVICE,
     )
-    
+
     # Account (electric/gas) sensors
     for account in accounts_data:
         entities.extend(
