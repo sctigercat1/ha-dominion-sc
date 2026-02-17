@@ -209,8 +209,8 @@ jobs:
           echo "$NOTES" > build/RELEASE_NOTES.md
 
           # Add link to full changelog
-          echo "" >> build/RELEASE_NOTES.md
-          echo "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details." >> build/RELEASE_NOTES.md
+          #echo "" >> build/RELEASE_NOTES.md
+          #echo "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details." >> build/RELEASE_NOTES.md
 
           # Add installation instructions
           echo "" >> build/RELEASE_NOTES.md
@@ -255,8 +255,8 @@ jobs:
           body_path: build/RELEASE_NOTES.md
           files: |
             build/dominionsc-${{ steps.version.outputs.version }}.zip
-            build/SHA256SUM
-            CHANGELOG.md
+            #build/SHA256SUM
+            #CHANGELOG.md
           prerelease: ${{ steps.version.outputs.prerelease }}
           draft: false
           token: ${{ secrets.GITHUB_TOKEN }}
