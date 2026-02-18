@@ -49,12 +49,15 @@ A Home Assistant custom integration for Dominion Energy South Carolina customers
    - **Password**: Your Dominion Energy SC online account password
 5. Complete two-factor authentication when prompted
    - **Recommended**: Use SMS-based verification for better reliability
-6. Select your cost tracking preferences:
+6. Select your historical data backfill preferences:
+   - **Backfill extra consumption data**: Load up to 365 days of historical electric and gas consumption data (default: off, backfills only the current billing cycle)
+   - **Backfill extra cost data**: Calculate estimated electric cost for the extended range, limited to the effective date of the chosen rate schedule (default: off; requires consumption backfill to be enabled)
+7. Select your cost tracking preferences:
    - **None**: No cost calculation
-   - **Fixed Rate**: Enter a custom rate (default: $0.14164/kWh)
-   - **Rate Schedule 8**: General Service rate
+   - **Rate Schedule 8**: General Residential Service rate
    - **Rate Schedule 6**: Energy Saver/Conservation rate
-7. Click **Submit**
+   - **Fixed Rate**: Enter a custom $/kWh rate (default: $0.14164/kWh)
+8. Click **Submit**
 
 ### Configuration Parameters
 
@@ -62,8 +65,14 @@ A Home Assistant custom integration for Dominion Energy South Carolina customers
 |-----------|-------------|----------|---------|
 | Username | Dominion Energy SC account username | Yes | - |
 | Password | Dominion Energy SC account password | Yes | - |
-| Cost Mode | Cost calculation method | No | None |
-| Fixed Rate | Custom rate in $/kWh | No | 0.14164 |
+| Extended Backfill | Load up to 365 days of consumption data | No | Off |
+| Extended Cost Backfill | Calculate cost for the extended range | No | Off |
+| Cost Mode | Cost calculation method | No | Rate 8 |
+| Fixed Rate | Custom rate in $/kWh (only when Cost Mode is Fixed) | No | 0.14164 |
+
+### Changing Cost Settings
+
+After initial setup, the cost calculation method can be changed at any time through **Settings** → **Devices & Services** → **Dominion Energy SC** → **Configure**. When changing cost modes, you will be given the option to recalculate historic cost records using the new method over a date range you specify, up to the effective date of your rate schedule.
 
 ## Removal
 
@@ -154,11 +163,10 @@ If you receive authentication errors:
 ## Known Limitations
 
 - **Data Delay**: Energy usage data is reported by Dominion Energy SC with a 24-48 hour delay. Real-time monitoring is not available. The API is polled every 12 hours for new energy data
-- **Single Service Address**: Currently supports only one service address per Dominion account. Multiple service address support may be in a future release
+- **Single Service Address**: Currently supports only one service address per Dominion Energy SC account. Support for multiple service addresses may be included in a future release
 - **No Time-of-Use Data**: Time-of-use pricing breakdowns or any other rate not discussed above are not available
 - **No Solar/Grid Export**: Energy provided back to the grid from sources like solar panels is not yet supported
-- **Historical Data**: Backfilling of data is limited to current billing cycle to allow for accurate cost calculation
-- **Cost Estimates**: Calculations are estimates based on selected rate schedule; actual bills may vary
+- **Cost Estimates**: Calculations are estimates based on selected rate schedule; actual bills may vary (in particular, optional historic cost calculation will likely be less accurate due to need of estimating prior billing cycles)
 - **TFA Required**: The account must have TFA activated; flows are not supported for accounts without TFA
 
 ## Support
