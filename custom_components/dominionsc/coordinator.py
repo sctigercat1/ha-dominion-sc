@@ -98,9 +98,6 @@ def _build_statistic_ids(
     """
     Construct the statistic IDs and name prefix for a given account.
 
-    This is the single canonical implementation of the ID-building logic used
-    by both ``_insert_statistics`` and ``_async_recalculate_historic_costs_locked``.
-
     Returns:
         (consumption_statistic_id, cost_statistic_id, name_prefix)
         ``cost_statistic_id`` is ``None`` for non-ELECTRIC accounts.
@@ -134,14 +131,6 @@ def _calculate_cost_for_wh(
 ) -> float:
     """
     Calculate the cost for a single Wh interval under the given cost mode.
-
-    This is the single canonical pricing function used by both the live
-    ingestion path and the historic recalculation path, so both are
-    guaranteed to produce identical values for the same inputs.
-
-    For tiered rate schedules, intervals that predate the schedule's
-    ``effective_date`` return 0.0 so that extended backfills do not
-    apply current rates to historical data.
 
     Args:
         interval_wh:          Wh consumed in this interval.
@@ -506,19 +495,7 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
         last_changed_per_account: dict[str, datetime],
         forecast: Forecast | None,
     ) -> None:
-        """
-        Backfill historical statistics for initial setup.
-
-        Fetches historical data and creates hourly statistics.  Two independent
-        backfill options control the range:
-
-        - **extended_backfill** - consumption data for all accounts (electric
-          and gas) is fetched for up to EXTENDED_BACKFILL_DAYS.
-        - **extended_cost_backfill** - electric cost is calculated for the full
-          extended range (still gated by the rate schedule's effective_date).
-          When disabled, cost is limited to the current billing cycle even if
-          consumption is backfilled further.
-        """
+        """Backfill historical statistics for initial setup."""
         today = date.today()
         billing_cycle_start = forecast.start_date
         data_date = today - timedelta(days=1)  # Yesterday
