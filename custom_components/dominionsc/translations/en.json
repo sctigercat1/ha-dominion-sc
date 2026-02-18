@@ -11,6 +11,26 @@
             "unknown": "Unexpected error"
         },
         "step": {
+            "cost_mode": {
+                "data": {
+                    "cost_mode": "Cost calculation method"
+                },
+                "data_description": {
+                    "cost_mode": "How to calculate energy costs"
+                },
+                "description": "Select how energy costs are calculated.",
+                "title": "Cost Calculation Settings"
+            },
+            "cost_mode_fixed_rate": {
+                "data": {
+                    "fixed_rate": "Fixed rate ($/kWh)"
+                },
+                "data_description": {
+                    "fixed_rate": "Single rate applied to all kWh consumed"
+                },
+                "description": "Enter the fixed rate applied to all usage.",
+                "title": "Fixed Rate Settings"
+            },
             "reauth_confirm": {
                 "data": {
                     "password": "Password",
@@ -81,6 +101,12 @@
         }
     },
     "options": {
+        "error": {
+            "end_before_start": "End date must be on or after the start date.",
+            "end_in_future": "End date cannot be in the future.",
+            "invalid_date_format": "Invalid date format. Please use YYYY-MM-DD (e.g. 2024-01-15).",
+            "recalculation_in_progress": "A historic cost recalculation is currently running. Please wait for it to finish before changing settings."
+        },
         "step": {
             "fixed_rate": {
                 "data": {
@@ -102,15 +128,27 @@
                 "description": "Select how energy costs are calculated.",
                 "title": "Cost Calculation Settings"
             },
-            "rate6": {
-                "description": "Costs will be calculated using Dominion Energy SC {schedule_name}, effective {effective_date}.\n\nBasic Facilities Charge: {basic_charge}/month\nTier Boundary: First {tier_boundary}, then excess usage\n\nSummer (May-Sep): First 800 kWh @ $0.14164/kWh, over 800 @ $0.15505/kWh\nWinter (Oct-Apr): First 800 kWh @ $0.14164/kWh, over 800 @ $0.13628/kWh\n\nNote: This rate requires meeting energy efficiency requirements. See your Dominion Energy SC documentation for details.\n\nNo additional configuration is needed.",
-                "submit": "Confirm",
-                "title": "Rate 6 - Energy Saver / Conservation"
+            "recalculate_date_range": {
+                "data": {
+                    "recalc_end_date": "End date (YYYY-MM-DD)",
+                    "recalc_start_date": "Start date (YYYY-MM-DD)"
+                },
+                "data_description": {
+                    "recalc_end_date": "The latest date to recalculate (inclusive)",
+                    "recalc_start_date": "The earliest date to recalculate (inclusive)"
+                },
+                "description": "Enter the start and end dates for the historic cost recalculation. Dates must be in YYYY-MM-DD format and cannot be in the future.",
+                "title": "Select Recalculation Date Range"
             },
-            "rate8": {
-                "description": "Costs will be calculated using Dominion Energy SC {schedule_name}, effective {effective_date}.\n\nBasic Facilities Charge: {basic_charge}/month\nTier Boundary: First {tier_boundary}, then excess usage\n\nSummer (May-Sep): First 800 kWh @ $0.14599/kWh, over 800 @ $0.15983/kWh\nWinter (Oct-Apr): First 800 kWh @ $0.14599/kWh, over 800 @ $0.14045/kWh\n\nNo additional configuration is needed.",
-                "submit": "Confirm",
-                "title": "Rate 8 - Residential Service"
+            "recalculate_history": {
+                "data": {
+                    "recalculate_history": "Recalculate historic cost statistics"
+                },
+                "data_description": {
+                    "recalculate_history": "If enabled, you will be asked to choose a date range for the recalculation"
+                },
+                "description": "Your cost calculation method is changing from **{old_mode}** to **{new_mode}**.\n\nExisting cost statistics were calculated using the old method. Would you like to recalculate historic cost records to use the new method?",
+                "title": "Recalculate Historic Costs?"
             }
         }
     }

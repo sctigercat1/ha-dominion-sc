@@ -1,5 +1,6 @@
 """Constants for the dominionsc integration."""
 
+import re
 from typing import Final
 
 DOMAIN = "dominionsc"
@@ -22,3 +23,8 @@ COST_MODE_RATE_6: Final = "rate_6"
 
 # Default cost values
 DEFAULT_FIXED_RATE: Final = 0.14164 / 1000  # $/Wh
+
+
+def clean_service_addr(service_addr_account_no: str) -> str:
+    """Normalise a service-address / account number into a safe identifier fragment."""
+    return re.sub(r"[\W]+|^(?=\d)", "_", service_addr_account_no).strip("_").lower()

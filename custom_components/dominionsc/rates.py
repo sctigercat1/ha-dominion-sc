@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
+from .const import COST_MODE_FIXED, COST_MODE_NONE, COST_MODE_RATE_6, COST_MODE_RATE_8
+
 
 class Season(Enum):
     """Billing season."""
@@ -41,6 +43,10 @@ class RateSchedule:
     rates: SeasonalTieredRates
 
 
+# ---------------------------------------------------------------------------
+# Rate schedule definitions
+# ---------------------------------------------------------------------------
+
 # Dominion Energy South Carolina Rate 8 - Residential Service
 # Effective for Bills Rendered On and After July 23, 2025
 SC_RATE_8 = RateSchedule(
@@ -73,6 +79,21 @@ SC_RATE_6 = RateSchedule(
         ),
     ),
 )
+
+# ---------------------------------------------------------------------------
+# Rate registry
+# ---------------------------------------------------------------------------
+# Maps each COST_MODE_* key (from const.py) to its RateSchedule.
+# To add a new tiered rate:
+#   1. Define a new RateSchedule constant above.
+#   2. Add a new entry here.
+#   3. Add the corresponding COST_MODE_* constant to const.py.
+# No other files need to change.
+
+TIERED_RATE_REGISTRY: dict[str, RateSchedule] = {
+    COST_MODE_RATE_8: SC_RATE_8,
+    COST_MODE_RATE_6: SC_RATE_6,
+}
 
 
 def get_season(month: int) -> Season:
@@ -154,3 +175,15 @@ def calculate_sc_rate_interval_cost(
 
     # Calculate energy cost with tiered pricing
     return calculate_tiered_cost(interval_wh, cumulative_before, tiered_rate)
+
+
+def build_cost_mode_choices() -> dict[str, str]:
+    """Build the ordered cost-mode selector used by both ConfigFlow and OptionsFlow."""
+    tiered_choices = {
+        mode: schedule.name for mode, schedule in TIERED_RATE_REGISTRY.items()
+    }
+    return {
+        COST_MODE_NONE: "None (no cost calculation)",
+        **tiered_choices,
+        COST_MODE_FIXED: "Fixed Rate (custom)",
+    }

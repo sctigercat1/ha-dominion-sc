@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -20,7 +19,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, clean_service_addr
 from .coordinator import (
     DominionSCAccountData,
     DominionSCConfigEntry,
@@ -121,12 +120,10 @@ async def async_setup_entry(
     accounts_data = dominionsc_data.accounts
     forecast = dominionsc_data.forecast
     service_addr_account_no = dominionsc_data.service_addr_account_no
-    clean_service_addr = (
-        re.sub(r"[\W]+|^(?=\d)", "_", service_addr_account_no).strip("_").lower()
-    )
+    clean_addr = clean_service_addr(service_addr_account_no)
 
     # Device per service address
-    device_id = f"{DOMAIN}_{clean_service_addr}"
+    device_id = f"{DOMAIN}_{clean_addr}"
     device = DeviceInfo(
         identifiers={(DOMAIN, device_id)},
         name=f"{service_addr_account_no}",
