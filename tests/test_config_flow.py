@@ -21,6 +21,8 @@ from custom_components.dominionsc.config_flow import (
 )
 from custom_components.dominionsc.const import (
     CONF_COST_MODE,
+    CONF_EXTENDED_BACKFILL,
+    CONF_EXTENDED_COST_BACKFILL,
     CONF_FIXED_RATE,
     CONF_LOGIN_DATA,
     COST_MODE_FIXED,
@@ -47,8 +49,8 @@ def _make_entry(hass: HomeAssistant, user_input: dict) -> MockConfigEntry:
     return entry
 
 
-async def _login_to_cost_mode(hass: HomeAssistant, user_input: dict) -> dict:
-    """Run the user step with a patched login and return the cost_mode form result."""
+async def _login_to_backfill(hass: HomeAssistant, user_input: dict) -> dict:
+    """Run the user step with a patched login and return the backfill_options form."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
@@ -56,6 +58,17 @@ async def _login_to_cost_mode(hass: HomeAssistant, user_input: dict) -> dict:
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], user_input
         )
+    assert result["step_id"] == "backfill_options"
+    return result
+
+
+async def _login_to_cost_mode(hass: HomeAssistant, user_input: dict) -> dict:
+    """Run through login and backfill_options, return the cost_mode form result."""
+    result = await _login_to_backfill(hass, user_input)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_EXTENDED_BACKFILL: False, CONF_EXTENDED_COST_BACKFILL: False},
+    )
     assert result["step_id"] == "cost_mode"
     return result
 
@@ -223,6 +236,107 @@ async def test_user_flow_success_fixed_rate(
 
 
 # ---------------------------------------------------------------------------
+# Config flow — backfill options step
+# ---------------------------------------------------------------------------
+
+
+async def test_backfill_options_shows_form(
+    hass: HomeAssistant,
+    mock_dominionsc_api: AsyncMock,
+    user_input: dict,
+) -> None:
+    """After login, the backfill options form is shown."""
+    result = await _login_to_backfill(hass, user_input)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "backfill_options"
+
+
+async def test_backfill_both_off(
+    hass: HomeAssistant,
+    mock_dominionsc_api: AsyncMock,
+    mock_setup_entry: AsyncMock,
+    user_input: dict,
+) -> None:
+    """
+    Declining both backfill options proceeds to
+    cost_mode with no backfill options set.
+    """
+    result = await _login_to_backfill(hass, user_input)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_EXTENDED_BACKFILL: False, CONF_EXTENDED_COST_BACKFILL: False},
+    )
+    assert result["step_id"] == "cost_mode"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_COST_MODE: COST_MODE_RATE_8}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert CONF_EXTENDED_BACKFILL not in result["options"]
+    assert CONF_EXTENDED_COST_BACKFILL not in result["options"]
+
+
+async def test_backfill_consumption_only(
+    hass: HomeAssistant,
+    mock_dominionsc_api: AsyncMock,
+    mock_setup_entry: AsyncMock,
+    user_input: dict,
+) -> None:
+    """Enabling only consumption backfill sets the flag and proceeds."""
+    result = await _login_to_backfill(hass, user_input)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_EXTENDED_BACKFILL: True, CONF_EXTENDED_COST_BACKFILL: False},
+    )
+    assert result["step_id"] == "cost_mode"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_COST_MODE: COST_MODE_RATE_8}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["options"][CONF_EXTENDED_BACKFILL] is True
+    assert CONF_EXTENDED_COST_BACKFILL not in result["options"]
+
+
+async def test_backfill_both_on(
+    hass: HomeAssistant,
+    mock_dominionsc_api: AsyncMock,
+    mock_setup_entry: AsyncMock,
+    user_input: dict,
+) -> None:
+    """Enabling both backfill options sets both flags."""
+    result = await _login_to_backfill(hass, user_input)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_EXTENDED_BACKFILL: True, CONF_EXTENDED_COST_BACKFILL: True},
+    )
+    assert result["step_id"] == "cost_mode"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_COST_MODE: COST_MODE_RATE_8}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["options"][CONF_EXTENDED_BACKFILL] is True
+    assert result["options"][CONF_EXTENDED_COST_BACKFILL] is True
+
+
+async def test_backfill_cost_without_consumption_rejected(
+    hass: HomeAssistant,
+    mock_dominionsc_api: AsyncMock,
+    user_input: dict,
+) -> None:
+    """Requesting cost backfill without consumption backfill shows an error."""
+    result = await _login_to_backfill(hass, user_input)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_EXTENDED_BACKFILL: False, CONF_EXTENDED_COST_BACKFILL: True},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "backfill_options"
+    assert result["errors"] == {"base": "invalid_backfill_selection"}
+
+
+# ---------------------------------------------------------------------------
 # Config flow — TFA paths
 # ---------------------------------------------------------------------------
 
@@ -259,8 +373,14 @@ async def test_user_flow_with_tfa(
         result["flow_id"], {CONF_TFA_CODE: "123456"}
     )
 
-    # TFA success routes to cost mode, not directly to CREATE_ENTRY.
+    # TFA success routes to backfill options first.
     assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "backfill_options"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_EXTENDED_BACKFILL: False, CONF_EXTENDED_COST_BACKFILL: False},
+    )
     assert result["step_id"] == "cost_mode"
 
     result = await hass.config_entries.flow.async_configure(

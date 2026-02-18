@@ -8,7 +8,8 @@
       "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
       "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
       "invalid_tfa_code": "The security code is incorrect. Please try again.",
-      "unknown": "[%key:common::config_flow::error::unknown%]"
+      "unknown": "[%key:common::config_flow::error::unknown%]",
+      "invalid_backfill_selection": "It is required to backfill consumption data if you want to backfill cost data. Please try again."
     },
     "step": {
       "user": {
@@ -63,6 +64,18 @@
           "cost_mode": "How to calculate energy costs"
         }
       },
+      "backfill_options": {
+        "title": "Historical Data",
+        "description": "By default, energy data is backfilled from the start of your current billing cycle. You can optionally load 365 days of historical data.\n\nNOTE: You will not be able to change your decision to do an extended backfill later unless you delete and re-add the integration",
+        "data": {
+          "extended_backfill": "Backfill extra electric and gas consumption data",
+          "extended_cost_backfill": "Backfill extra electric cost data"
+        },
+        "data_description": {
+          "extended_backfill": "Load historical electric and gas consumption data for the last 365 days",
+          "extended_cost_backfill": "Calculate estimated cost of electric data for the last 365 days or the effective date of the chosen rate schedule, whichever is later. Accuracy may vary."
+        }
+      },
       "cost_mode_fixed_rate": {
         "title": "Fixed Rate Settings",
         "description": "Enter the fixed rate applied to all usage.",
@@ -105,7 +118,7 @@
       },
       "recalculate_history": {
         "title": "Recalculate Historic Costs?",
-        "description": "Your cost calculation method is changing from **{old_mode}** to **{new_mode}**.\n\nExisting cost statistics were calculated using the old method. Would you like to recalculate historic cost records to use the new method?",
+        "description": "Your cost calculation method is changing from **{old_mode}** to **{new_mode}**.\n\nExisting cost statistics were calculated using the old method. Would you like to recalculate historic cost records to use the new method?\n\nNOTE:\n- If changing to a rate schedule, cost calculation may not be completely accurate as billing cycles must be estimated\n- Cost calculation will be limited to the effective date of the new rate schedule",
         "data": {
           "recalculate_history": "Recalculate historic cost statistics"
         },

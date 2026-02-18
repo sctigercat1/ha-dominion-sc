@@ -22,7 +22,12 @@ COST_MODE_RATE_8: Final = "rate_8"
 COST_MODE_RATE_6: Final = "rate_6"
 
 # Default cost values
-DEFAULT_FIXED_RATE: Final = 0.14164 / 1000  # $/Wh
+DEFAULT_FIXED_RATE: Final = 0.14164  # $/Wh
+
+# Backfill options
+CONF_EXTENDED_BACKFILL: Final = "extended_backfill"
+CONF_EXTENDED_COST_BACKFILL: Final = "extended_cost_backfill"
+EXTENDED_BACKFILL_DAYS: Final = 365
 
 
 def clean_service_addr(service_addr_account_no: str) -> str:

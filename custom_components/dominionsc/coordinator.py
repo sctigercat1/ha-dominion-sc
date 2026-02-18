@@ -1,6 +1,7 @@
 """Coordinator to handle dominionsc connections."""
 
 import asyncio
+import calendar
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -30,13 +31,14 @@ from homeassistant.util.unit_conversion import EnergyConverter, VolumeConverter
 from dominionsc import (
     DominionSC,
     Forecast,
-    UsageRead,
     create_cookie_jar,
 )
 from dominionsc.exceptions import ApiException, CannotConnect, InvalidAuth, MfaChallenge
 
 from .const import (
     CONF_COST_MODE,
+    CONF_EXTENDED_BACKFILL,
+    CONF_EXTENDED_COST_BACKFILL,
     CONF_FIXED_RATE,
     CONF_LOGIN_DATA,
     COST_MODE_FIXED,
@@ -44,6 +46,7 @@ from .const import (
     COST_MODE_RATE_8,
     DEFAULT_FIXED_RATE,
     DOMAIN,
+    EXTENDED_BACKFILL_DAYS,
     clean_service_addr,
 )
 from .rates import TIERED_RATE_REGISTRY, RateSchedule, calculate_sc_rate_interval_cost
@@ -111,16 +114,14 @@ def _build_statistic_ids(
     return consumption_id, cost_id, name_prefix
 
 
-def _extract_last_sum(last_stat: dict, statistic_id: str) -> float:
-    """
-    Safely extract the cumulative ``sum`` from a ``get_last_statistics`` result.
-
-    Returns 0.0 if the statistic does not exist or the value cannot be parsed.
-    """
-    try:
-        return float(last_stat[statistic_id][0].get("sum") or 0)
-    except (KeyError, IndexError, TypeError, ValueError):
-        return 0.0
+def _resolve_cost_config(
+    options: dict[str, Any],
+) -> tuple[str, float, RateSchedule | None]:
+    """Return (cost_mode, fixed_rate, rate_schedule) with consistent defaults."""
+    cost_mode = options.get(CONF_COST_MODE, COST_MODE_RATE_8)
+    fixed_rate: float = options.get(CONF_FIXED_RATE, DEFAULT_FIXED_RATE)
+    rate_schedule: RateSchedule | None = TIERED_RATE_REGISTRY.get(cost_mode)
+    return cost_mode, fixed_rate, rate_schedule
 
 
 def _calculate_cost_for_wh(
@@ -135,9 +136,12 @@ def _calculate_cost_for_wh(
     Calculate the cost for a single Wh interval under the given cost mode.
 
     This is the single canonical pricing function used by both the live
-    ingestion path (via ``_calculate_interval_cost``) and the historic
-    recalculation path, so both are guaranteed to produce identical values
-    for the same inputs.
+    ingestion path and the historic recalculation path, so both are
+    guaranteed to produce identical values for the same inputs.
+
+    For tiered rate schedules, intervals that predate the schedule's
+    ``effective_date`` return 0.0 so that extended backfills do not
+    apply current rates to historical data.
 
     Args:
         interval_wh:          Wh consumed in this interval.
@@ -145,7 +149,7 @@ def _calculate_cost_for_wh(
         cumulative_wh_before: Total Wh consumed before this interval in the
                               billing period (used for tier boundary tracking).
         cost_mode:            One of the COST_MODE_* constants.
-        fixed_rate:           $/Wh fixed rate (only used when cost_mode is FIXED).
+        fixed_rate:           $/kWh fixed rate (only used when cost_mode is FIXED).
         rate_schedule:        RateSchedule instance (only used for tiered modes).
                               Pass ``None`` to produce 0.0 cost (e.g. outside the
                               billing period for tiered rates).
@@ -157,8 +161,12 @@ def _calculate_cost_for_wh(
     if cost_mode == COST_MODE_NONE:
         return 0.0
     if cost_mode == COST_MODE_FIXED:
-        return interval_wh * fixed_rate
+        return interval_wh * (fixed_rate / 1000)
     if rate_schedule is not None:
+        # Skip intervals that predate the rate schedule's effective date
+        # so extended backfills don't apply current rates to old data.
+        if interval_dt.date() < rate_schedule.effective_date:
+            return 0.0
         return calculate_sc_rate_interval_cost(
             interval_wh,
             interval_dt,
@@ -168,14 +176,93 @@ def _calculate_cost_for_wh(
     return 0.0
 
 
-def _resolve_cost_config(
-    options: dict[str, Any],
-) -> tuple[str, float, RateSchedule | None]:
-    """Return (cost_mode, fixed_rate, rate_schedule) with consistent defaults."""
-    cost_mode = options.get(CONF_COST_MODE, COST_MODE_RATE_8)
-    fixed_rate: float = options.get(CONF_FIXED_RATE, DEFAULT_FIXED_RATE)
-    rate_schedule: RateSchedule | None = TIERED_RATE_REGISTRY.get(cost_mode)
-    return cost_mode, fixed_rate, rate_schedule
+def _billing_cycle_gap(start_date: date) -> int:
+    """
+    Temporary algorithm for identifying
+    billing cycle length by month of start_date.
+    """
+    m = start_date.month
+    y = start_date.year
+
+    # February of the billing year that contains this cycle start
+    feb_year = y + 1 if m >= 8 else y
+    is_leap = calendar.isleap(feb_year)
+
+    gap = 30
+
+    if m in (8, 9, 11):  # Aug, Sep, Nov - fixed 31
+        gap = 31
+    if m in (3, 5, 7, 10, 12):  # Mar, May, Jul, Oct, Dec - fixed 30
+        gap = 30
+    if m == 1:  # January: 31 every 4 years (year % 4 == 2)
+        gap = 31 if y % 4 == 2 else 30
+    if m == 2:  # February: compensates January (sum = 61)
+        jan_gap = 31 if y % 4 == 2 else 30
+        gap = 61 - jan_gap
+    if m == 4:  # April: 31 in leap billing-years
+        gap = 31 if is_leap else 30
+    if m == 6:  # June: 30 in leap billing-years
+        gap = 30 if is_leap else 31
+
+    return gap
+
+
+def _estimate_billing_cycles(
+    anchor_start: date,
+    anchor_end: date,
+    earliest: date,
+) -> list[tuple[date, date]]:
+    """
+    Temporary algorithm for identifying billing cycle intervals
+    given current billing cycle.
+
+    Args:
+        anchor_start: Start date of the known (current) billing cycle.
+        anchor_end:   End date of the known (current) billing cycle.
+        earliest:     Generate cycles back to (at least) this date.
+
+    Returns:
+        List of (start_date, end_date) tuples, ordered oldest-first.
+        The last element is the anchor (current) cycle.
+
+    """
+    # ── 1. Chain backward from anchor until we reach (or pass) earliest ──────
+    starts: list[date] = [anchor_start]
+    current = anchor_start
+    while current > earliest:
+        # Determine the previous month naively to get an approximate start,
+        # then walk backward exactly one gap from that approximation.
+        prev_m = current.month - 1 or 12
+        prev_y = current.year - (1 if current.month == 1 else 0)
+        # Use the 15th as a stable probe date to compute the gap for that month
+        probe = date(prev_y, prev_m, 15)
+        current = current - timedelta(days=_billing_cycle_gap(probe))
+        starts.append(current)
+
+    starts.reverse()  # oldest first
+
+    # ── 2. Build contiguous (start, end) pairs ────────────────────────────────
+    cycles: list[tuple[date, date]] = []
+    for i, cycle_start in enumerate(starts):
+        if i == len(starts) - 1:
+            # Anchor cycle - use the exact API-provided end date
+            cycles.append((cycle_start, anchor_end))
+        else:
+            cycle_end = starts[i + 1] - timedelta(days=1)
+            cycles.append((cycle_start, cycle_end))
+
+    return cycles
+
+
+def _find_billing_cycle_for_date(
+    target: date,
+    billing_cycles: list[tuple[date, date]],
+) -> tuple[date, date] | None:
+    """Return the billing cycle that contains *target*, or ``None``."""
+    for cycle_start, cycle_end in billing_cycles:
+        if cycle_start <= target <= cycle_end:
+            return (cycle_start, cycle_end)
+    return None
 
 
 class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
@@ -277,35 +364,6 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
             forecast=forecast,
             service_addr_account_no=service_addr_account_no,
             last_updated=dt_util.utcnow(),
-        )
-
-    def _calculate_interval_cost(
-        self,
-        usage_read: UsageRead,
-        cumulative_wh_before: float = 0.0,
-    ) -> float:
-        """
-        Calculate cost for a single interval based on the currently configured mode.
-
-        Delegates to the module-level ``_calculate_cost_for_wh`` so that live
-        ingestion and historic recalculation share identical pricing logic.
-
-        Args:
-            usage_read: The usage read interval data.
-            cumulative_wh_before: Cumulative Wh before this interval in the
-                billing period. Used for tiered pricing.
-
-        """
-        cost_mode, fixed_rate, rate_schedule = _resolve_cost_config(
-            self.config_entry.options
-        )
-        return _calculate_cost_for_wh(
-            usage_read.consumption,
-            usage_read.start_time,
-            cumulative_wh_before,
-            cost_mode,
-            fixed_rate,
-            rate_schedule,
         )
 
     def _push_cost_statistics(
@@ -451,13 +509,46 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
         """
         Backfill historical statistics for initial setup.
 
-        Fetches the last BACKFILL_DAYS of data and creates hourly statistics.
+        Fetches historical data and creates hourly statistics.  Two independent
+        backfill options control the range:
+
+        - **extended_backfill** - consumption data for all accounts (electric
+          and gas) is fetched for up to EXTENDED_BACKFILL_DAYS.
+        - **extended_cost_backfill** - electric cost is calculated for the full
+          extended range (still gated by the rate schedule's effective_date).
+          When disabled, cost is limited to the current billing cycle even if
+          consumption is backfilled further.
         """
         today = date.today()
-        start_date = forecast.start_date  # today - timedelta(days=BACKFILL_DAYS)
+        billing_cycle_start = forecast.start_date
         data_date = today - timedelta(days=1)  # Yesterday
 
-        _LOGGER.debug("Backfilling statistics from %s to %s", start_date, data_date)
+        extended = self.config_entry.options.get(CONF_EXTENDED_BACKFILL, False)
+        extended_cost = self.config_entry.options.get(
+            CONF_EXTENDED_COST_BACKFILL, False
+        )
+
+        if extended:
+            start_date = today - timedelta(days=EXTENDED_BACKFILL_DAYS)
+        else:
+            start_date = billing_cycle_start
+
+        # When consumption is extended but cost is not, limit cost to the
+        # current billing cycle.  When both are extended (or neither is),
+        # cost_start_date is None which means no additional restriction.
+        cost_start_date: date | None = None
+        if extended and not extended_cost:
+            cost_start_date = billing_cycle_start
+
+        _LOGGER.debug(
+            "Backfilling statistics from %s to %s "
+            "(extended=%s, extended_cost=%s, billing_cycle_start=%s)",
+            start_date,
+            data_date,
+            extended,
+            extended_cost,
+            billing_cycle_start,
+        )
 
         # Call the common processing function with initial values
         await self._process_and_insert_statistics(
@@ -469,6 +560,7 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
             last_stat_dt=None,  # No previous stat for backfill
             last_changed_per_account=last_changed_per_account,
             forecast=forecast,
+            cost_start_date=cost_start_date,
         )
 
     async def _update_statistics(
@@ -517,7 +609,15 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
         # Get the last cost sum (default to 0 if cost stats don't exist yet)
         cost_sum = 0.0
         if metadata.cost_id:
-            cost_sum = _extract_last_sum(last_cost_stat, metadata.cost_id)
+            try:
+                cost_sum = float(last_cost_stat[metadata.cost_id][0].get("sum") or 0)
+            except (KeyError, IndexError, TypeError, ValueError) as err:
+                _LOGGER.debug(
+                    "WARNING: Unable to get cost_sum: %s, %s, %s",
+                    str(last_cost_stat),
+                    metadata.cost_id,
+                    err,
+                )
 
         # Determine the date range to fetch
         today = date.today()
@@ -587,12 +687,11 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
         last_stat_dt: datetime | None,
         last_changed_per_account: dict[str, datetime],
         forecast: Forecast | None,
+        cost_start_date: date | None = None,
     ) -> None:
         """
         Process usage data and insert statistics.
-
         Common logic for backfill and updates.
-
         """
         # Convert dates to datetimes for API call
         tz = await dt_util.async_get_time_zone(self.api.get_timezone())
@@ -658,19 +757,27 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
         # Group intervals by hour for hourly statistics
         # For electric accounts with cost tracking, also calculate costs
         is_electric = metadata.account == "ELECTRIC"
-        cost_mode_here, _, _ = _resolve_cost_config(self.config_entry.options)
+        cost_mode_here, fixed_rate_here, rate_schedule_here = _resolve_cost_config(
+            self.config_entry.options
+        )
         is_tiered_rate = cost_mode_here in TIERED_RATE_REGISTRY
         cumulative_wh = 0.0
 
-        # Track billing cycle for tiered rates
-        # Forecasted data if possible, otherwise monthly fallback
-        billing_period_start = forecast.start_date
-        billing_period_end = forecast.end_date
-        _LOGGER.debug(
-            "Using billing cycle for tier resets: %s to %s",
-            billing_period_start,
-            billing_period_end,
-        )
+        billing_cycles: list[tuple[date, date]] = []
+        if is_tiered_rate:
+            billing_cycles = _estimate_billing_cycles(
+                anchor_start=forecast.start_date,
+                anchor_end=forecast.end_date,
+                earliest=start_date,
+            )
+            _LOGGER.debug(
+                "Estimated %d billing cycles from %s to %s for tier tracking",
+                len(billing_cycles),
+                billing_cycles[0][0] if billing_cycles else "?",
+                billing_cycles[-1][1] if billing_cycles else "?",
+            )
+
+        current_cycle: tuple[date, date] | None = None
 
         hourly_consumption: dict[datetime, float] = {}
         hourly_cost: dict[datetime, float] = {}
@@ -686,21 +793,37 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
 
             hourly_consumption[hour_start] += usage_read.consumption
 
-            # Only add cost data if within the existing billing cycle
-            # and is_tiered_rate, also if fixed rate
+            # Calculate cost for electric accounts with cost tracking
             if is_electric and metadata.cost_id:
-                if not is_tiered_rate or (
-                    billing_period_start <= interval_date <= billing_period_end
-                ):
-                    if hour_start not in hourly_cost:
-                        hourly_cost[hour_start] = 0.0
-
-                    hourly_cost[hour_start] += self._calculate_interval_cost(
-                        usage_read,
-                        cumulative_wh_before=cumulative_wh,
-                    )
-
+                # Skip cost for intervals before cost_start_date when set
+                # (e.g. extended consumption backfill without extended cost)
+                if cost_start_date is not None and interval_date < cost_start_date:
                     cumulative_wh += usage_read.consumption
+                    continue
+
+                # For tiered rates, reset cumulative Wh at billing cycle
+                # boundaries so the tier threshold is applied per-cycle.
+                if is_tiered_rate and billing_cycles:
+                    row_cycle = _find_billing_cycle_for_date(
+                        interval_date, billing_cycles
+                    )
+                    if row_cycle != current_cycle:
+                        current_cycle = row_cycle
+                        cumulative_wh = 0.0
+
+                if hour_start not in hourly_cost:
+                    hourly_cost[hour_start] = 0.0
+
+                hourly_cost[hour_start] += _calculate_cost_for_wh(
+                    usage_read.consumption,
+                    usage_read.start_time,
+                    cumulative_wh,
+                    cost_mode_here,
+                    fixed_rate_here,
+                    rate_schedule_here,
+                )
+
+                cumulative_wh += usage_read.consumption
 
         # Build statistics with cumulative sums
         consumption_statistics: list[StatisticData] = []
@@ -716,16 +839,17 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
         if hourly_cost:
             for hour_start in sorted(hourly_cost.keys()):
                 cost = hourly_cost[hour_start]
-                cost_sum += cost
-                cost_statistics.append(
-                    StatisticData(start=hour_start, state=cost, sum=cost_sum)
-                )
+                if cost > 0:
+                    cost_sum += cost
+                    cost_statistics.append(
+                        StatisticData(start=hour_start, state=cost, sum=cost_sum)
+                    )
 
         if not consumption_statistics:
             return
 
         # Update last_changed with the latest interval time
-        last_changed_per_account[metadata.account] = usage_reads[-1].start_time
+        last_changed_per_account[metadata.account] = usage_reads[-1].end_time
 
         # Create metadata for consumption
         consumption_metadata = StatisticMetaData(
@@ -787,21 +911,22 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
         new_options: dict[str, Any],
     ) -> None:
         """
-        Recalculate cost statistics from stored consumption data (no API call).
+        Recalculate cost statistics from stored consumption data.
 
-        Prices each hourly consumption ``state`` value using ``_calculate_cost_for_wh``.
-        For tiered rates, ``cumulative_wh`` accumulates from epoch without resetting
-        since historic billing period boundaries are unavailable.  The running cost
-        ``sum`` is seeded from the last record before the window to keep the series
-        continuous.
+        For tiered rates the cumulative Wh counter resets at each estimated
+        billing cycle boundary so tier thresholds are applied correctly.
+        The running cost ``sum`` is seeded from the last record before the
+        window to keep the statistic series continuous.
         """
         new_cost_mode, new_fixed_rate, rate_schedule = _resolve_cost_config(new_options)
         if new_cost_mode == COST_MODE_NONE:
             _LOGGER.info("New cost mode is NONE; skipping recalculation.")
             return
 
+        is_tiered = new_cost_mode in TIERED_RATE_REGISTRY
+
         _LOGGER.info(
-            "Starting historic cost recalculation from %s to %s (new mode: %s)",
+            "Starting historic cost recalculation from %s to %s (mode: %s)",
             start_date,
             end_date,
             new_cost_mode,
@@ -809,149 +934,124 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
 
         tz = await dt_util.async_get_time_zone(self.api.get_timezone())
 
-        # Window bounds: [window_start, window_end) as tz-aware datetimes.
-        window_start = datetime.combine(start_date, datetime.min.time()).replace(
-            tzinfo=tz
-        )
-        window_end = datetime.combine(
-            end_date + timedelta(days=1), datetime.min.time()
-        ).replace(tzinfo=tz)
+        def _to_dt(d: date) -> datetime:
+            return datetime.combine(d, datetime.min.time()).replace(tzinfo=tz)
 
-        # ── 1. Reconstruct statistic IDs via the shared helper ────────────────────
-        # async_get_accounts() reads self.accounts in-memory — no network call.
+        window_start = _to_dt(start_date)
+        window_end = _to_dt(end_date + timedelta(days=1))
+
+        # ── 1. Resolve statistic IDs ──────────────────────────────────────────────
         accounts, service_addr_account_no = await self.api.async_get_accounts()
-
         if "ELECTRIC" not in accounts:
             _LOGGER.info("No ELECTRIC account found; nothing to recalculate.")
             return
 
-        consumption_statistic_id, cost_statistic_id, name_prefix = _build_statistic_ids(
+        consumption_id, cost_id, name_prefix = _build_statistic_ids(
             service_addr_account_no, "ELECTRIC"
         )
-        # cost_statistic_id is always non-None for ELECTRIC (see _build_statistic_ids),
-        # but assert here to satisfy the type checker.
-        assert cost_statistic_id is not None
+        assert cost_id is not None
 
-        # ── 2. Fetch consumption statistics for the recalculation window ──────────
-        window_consumption: dict = await get_instance(self.hass).async_add_executor_job(
-            statistics_during_period,
-            self.hass,
-            window_start,
-            window_end,
-            {consumption_statistic_id},
-            "hour",
-            None,
-            {"state"},
-        )
-
-        consumption_rows: list[dict] = window_consumption.get(
-            consumption_statistic_id, []
-        )
-        if not consumption_rows:
-            _LOGGER.warning(
-                "No consumption statistics found for %s in range %s - %s; "
-                "nothing to recalculate.",
-                consumption_statistic_id,
+        # ── 2. Estimate billing cycles (tiered rates only) ────────────────────────
+        billing_cycles: list[tuple[date, date]] = []
+        if is_tiered:
+            forecast = await self.api.async_get_forecast()
+            billing_cycles = _estimate_billing_cycles(
+                forecast.start_date,
+                forecast.end_date,
                 start_date,
-                end_date,
             )
+
+        # ── 3. Fetch consumption rows ─────────────────────────────────────────────
+        # For tiered rates, start from the earliest estimated cycle so the
+        # cumulative Wh counter is correct even when the window is mid-cycle.
+        fetch_start = window_start
+        if billing_cycles:
+            fetch_start = min(fetch_start, _to_dt(billing_cycles[0][0]))
+
+        consumption_rows: list[dict] = (
+            await get_instance(self.hass).async_add_executor_job(
+                statistics_during_period,
+                self.hass,
+                fetch_start,
+                window_end,
+                {consumption_id},
+                "hour",
+                None,
+                {"state"},
+            )
+        ).get(consumption_id, [])
+
+        if not consumption_rows:
+            _LOGGER.warning("No consumption data in %s-%s.", start_date, end_date)
             return
 
-        # ── 3. Seed the tier counter from consumption before the window ───────────
-        # Sum all consumption state values before window_start so the tier boundary
-        # is crossed at the correct point for mid-cycle windows.  Returns 0.0 if
-        # no rows exist before the window (first-ever stat or full-history recalc).
-        cumulative_wh_before_window = 0.0
-        pre_window_consumption: dict = await get_instance(
-            self.hass
-        ).async_add_executor_job(
-            statistics_during_period,
+        # ── 4. Seed running cost sum from last record before the window ───────────
+        pre_cost_sum = 0.0
+        last_cost = await get_instance(self.hass).async_add_executor_job(
+            get_last_statistics,
             self.hass,
-            datetime.fromtimestamp(0, tz=dt_util.UTC),  # epoch — all history
-            window_start,  # exclusive upper bound
-            {consumption_statistic_id},
-            "hour",
-            None,
-            {"state"},
-        )
-        for row in pre_window_consumption.get(consumption_statistic_id, []):
-            val = row.get("state")
-            if val is not None:
-                cumulative_wh_before_window += float(val)
-
-        _LOGGER.debug(
-            "Cumulative Wh before window start %s: %.1f Wh",
-            start_date,
-            cumulative_wh_before_window,
-        )
-
-        # ── 5. Seed the running cost sum from the last record before the window ───
-        # Use a bounded query rather than get_last_statistics, which returns the
-        # last row of the whole series and would cause a spike at the window start.
-        pre_window_cost_sum = 0.0
-        pre_window_cost_rows: dict = await get_instance(
-            self.hass
-        ).async_add_executor_job(
-            statistics_during_period,
-            self.hass,
-            datetime.fromtimestamp(0, tz=dt_util.UTC),  # epoch — all history
-            window_start,  # exclusive upper bound
-            {cost_statistic_id},
-            "hour",
-            None,
+            1,
+            cost_id,
+            True,
             {"sum"},
         )
-        rows_before = pre_window_cost_rows.get(cost_statistic_id, [])
-        if rows_before:
-            pre_window_cost_sum = float(rows_before[-1].get("sum") or 0.0)
+        if cost_id in last_cost:
+            last_ts = last_cost[cost_id][0].get("start", 0)
+            if isinstance(last_ts, (int, float)):
+                last_ts_dt = datetime.fromtimestamp(last_ts, tz=dt_util.UTC)
+            else:
+                last_ts_dt = last_ts
+            if last_ts_dt < window_start:
+                pre_cost_sum = float(last_cost[cost_id][0].get("sum") or 0.0)
 
-        # ── 6. Price each hourly consumption row under the new rate ───────────────
-        # cumulative_wh is never reset: historic period start dates are unavailable,
-        # so a continuous counter is the most accurate approximation possible.
+        # ── 5. Price each row, resetting cumulative Wh at cycle boundaries ────────
         cost_statistics: list[StatisticData] = []
-        running_cost_sum = pre_window_cost_sum
-        cumulative_wh = cumulative_wh_before_window
+        running_sum = pre_cost_sum
+        current_cycle: tuple[date, date] | None = None
+        cumulative_wh = 0.0
 
         for row in consumption_rows:
-            # `start` is a float Unix timestamp as returned by statistics_during_period
-            start_ts: float = row["start"]
-            hour_start_dt = datetime.fromtimestamp(start_ts, tz=dt_util.UTC)
-            interval_wh: float = float(row.get("state") or 0.0)
+            hour_dt = datetime.fromtimestamp(row["start"], tz=dt_util.UTC)
+            interval_wh = float(row.get("state") or 0.0)
+            row_date = hour_dt.astimezone(tz).date() if tz else hour_dt.date()
 
-            new_cost = _calculate_cost_for_wh(
+            # Reset cumulative Wh at billing cycle boundaries
+            if is_tiered and billing_cycles:
+                row_cycle = _find_billing_cycle_for_date(row_date, billing_cycles)
+                if row_cycle != current_cycle:
+                    current_cycle = row_cycle
+                    cumulative_wh = 0.0
+
+            cost = _calculate_cost_for_wh(
                 interval_wh,
-                hour_start_dt,
+                hour_dt,
                 cumulative_wh,
                 new_cost_mode,
                 new_fixed_rate,
                 rate_schedule,
             )
-
-            running_cost_sum += new_cost
             cumulative_wh += interval_wh
 
-            cost_statistics.append(
-                StatisticData(
-                    start=hour_start_dt,
-                    state=new_cost,
-                    sum=running_cost_sum,
+            # Only emit rows within the requested window (earlier rows are
+            # only fetched to seed the cumulative Wh counter for mid-cycle starts)
+            if cost > 0 and row_date >= start_date:
+                running_sum += cost
+                cost_statistics.append(
+                    StatisticData(start=hour_dt, state=cost, sum=running_sum)
                 )
-            )
 
         if not cost_statistics:
             _LOGGER.warning(
-                "Recalculation produced no cost data for range %s - %s.",
-                start_date,
-                end_date,
+                "Recalculation produced no cost data for %s-%s.", start_date, end_date
             )
             return
 
-        # ── 7. Upsert the corrected statistics into the recorder ──────────────────
+        # ── 6. Upsert into recorder ──────────────────────────────────────────────
         self._push_cost_statistics(
-            cost_statistic_id,
+            cost_id,
             name_prefix.substitute(stat_type="cost"),
             cost_statistics,
             "recalculation",
-            running_cost_sum,
+            running_sum,
         )
         _LOGGER.info("Historic cost recalculation complete.")

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 
 from .const import COST_MODE_FIXED, COST_MODE_NONE, COST_MODE_RATE_6, COST_MODE_RATE_8
@@ -38,8 +38,8 @@ class RateSchedule:
     """Complete rate schedule for a Dominion Energy SC tariff."""
 
     name: str
-    effective_date: str
-    basic_facilities_charge: float  # $/month flat charge
+    effective_date: date
+    basic_facilities_charge: float
     rates: SeasonalTieredRates
 
 
@@ -51,7 +51,7 @@ class RateSchedule:
 # Effective for Bills Rendered On and After July 23, 2025
 SC_RATE_8 = RateSchedule(
     name="Rate 8 - Residential Service",
-    effective_date="2025-07-23",
+    effective_date=date(2025, 7, 23),
     basic_facilities_charge=9.00,
     rates=SeasonalTieredRates(
         summer=TieredRate(
@@ -68,7 +68,7 @@ SC_RATE_8 = RateSchedule(
 # Effective for Bills Rendered On and After July 23, 2025
 SC_RATE_6 = RateSchedule(
     name="Rate 6 - Energy Saver / Conservation Rate",
-    effective_date="2025-07-23",
+    effective_date=date(2025, 7, 23),
     basic_facilities_charge=9.00,
     rates=SeasonalTieredRates(
         summer=TieredRate(

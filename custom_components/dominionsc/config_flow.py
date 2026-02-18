@@ -33,6 +33,8 @@ from dominionsc import (
 from .const import (
     COMMON_NAME,
     CONF_COST_MODE,
+    CONF_EXTENDED_BACKFILL,
+    CONF_EXTENDED_COST_BACKFILL,
     CONF_FIXED_RATE,
     CONF_LOGIN_DATA,
     COST_MODE_FIXED,
@@ -114,7 +116,7 @@ class DominionSCConfigFlow(ConfigFlow, domain=DOMAIN):
                 _LOGGER.error("API structure error during login: %s", err)
                 errors["base"] = "unknown"
             else:
-                return await self.async_step_cost_mode()
+                return await self.async_step_backfill_options()
 
         schema_dict: VolDictType = {
             vol.Required(CONF_USERNAME): str,
@@ -199,12 +201,42 @@ class DominionSCConfigFlow(ConfigFlow, domain=DOMAIN):
                     return self.async_update_reload_and_abort(
                         self._get_reauth_entry(), data=self._data
                     )
-                return await self.async_step_cost_mode()
+                return await self.async_step_backfill_options()
 
         return self.async_show_form(
             step_id="tfa_code",
             data_schema=self.add_suggested_values_to_schema(
                 vol.Schema({vol.Required(CONF_TFA_CODE): str}), user_input
+            ),
+            errors=errors,
+        )
+
+    async def async_step_backfill_options(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Ask user if they want to backfill up to 365 days of data."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            if (
+                user_input[CONF_EXTENDED_COST_BACKFILL]
+                and not user_input[CONF_EXTENDED_BACKFILL]
+            ):
+                errors["base"] = "invalid_backfill_selection"
+            else:
+                if user_input[CONF_EXTENDED_BACKFILL]:
+                    self._options[CONF_EXTENDED_BACKFILL] = True
+                if user_input[CONF_EXTENDED_COST_BACKFILL]:
+                    self._options[CONF_EXTENDED_COST_BACKFILL] = True
+                return await self.async_step_cost_mode()
+
+        return self.async_show_form(
+            step_id="backfill_options",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_EXTENDED_BACKFILL, default=False): bool,
+                    vol.Required(CONF_EXTENDED_COST_BACKFILL, default=False): bool,
+                }
             ),
             errors=errors,
         )
@@ -217,7 +249,7 @@ class DominionSCConfigFlow(ConfigFlow, domain=DOMAIN):
             mode = user_input[CONF_COST_MODE]
             if mode == COST_MODE_FIXED:
                 return await self.async_step_cost_mode_fixed_rate()
-            self._options = {CONF_COST_MODE: mode}
+            self._options[CONF_COST_MODE] = mode
             return self._async_create_dominionsc_entry(self._data)
 
         mode_choices = build_cost_mode_choices()
@@ -238,10 +270,8 @@ class DominionSCConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Configure a custom fixed rate during initial setup."""
         if user_input is not None:
-            self._options = {
-                CONF_COST_MODE: COST_MODE_FIXED,
-                CONF_FIXED_RATE: user_input[CONF_FIXED_RATE],
-            }
+            self._options[CONF_COST_MODE] = COST_MODE_FIXED
+            self._options[CONF_FIXED_RATE] = user_input[CONF_FIXED_RATE]
             return self._async_create_dominionsc_entry(self._data)
 
         return self.async_show_form(
@@ -346,7 +376,7 @@ class DominionSCOptionsFlow(OptionsFlow):
             if self._selected_mode == COST_MODE_FIXED:
                 return await self.async_step_fixed_rate()
             if self._selected_mode in TIERED_RATE_REGISTRY:
-                self._new_options = {CONF_COST_MODE: self._selected_mode}
+                self._new_options[CONF_COST_MODE] = self._selected_mode
                 return await self.async_step_recalculate_history()
             # No cost calculation - skip history recalculation (nothing to calculate)
             return self.async_create_entry(
@@ -374,10 +404,8 @@ class DominionSCOptionsFlow(OptionsFlow):
     ) -> ConfigFlowResult:
         """Step 2a: Configure fixed rate."""
         if user_input is not None:
-            self._new_options = {
-                CONF_COST_MODE: COST_MODE_FIXED,
-                CONF_FIXED_RATE: user_input[CONF_FIXED_RATE],
-            }
+            self._new_options[CONF_COST_MODE] = COST_MODE_FIXED
+            self._new_options[CONF_FIXED_RATE] = user_input[CONF_FIXED_RATE]
             return await self.async_step_recalculate_history()
 
         current_options = self._config_entry.options
