@@ -165,35 +165,29 @@ def _calculate_cost_for_wh(
     return 0.0
 
 
-def _billing_cycle_gap(start_date: date) -> int:
-    """
-    Temporary algorithm for identifying
-    billing cycle length by month of start_date.
-    """
-    m = start_date.month
-    y = start_date.year
-
-    # February of the billing year that contains this cycle start
-    feb_year = y + 1 if m >= 8 else y
-    is_leap = calendar.isleap(feb_year)
-
-    gap = 30
-
-    if m in (8, 9, 11):  # Aug, Sep, Nov - fixed 31
-        gap = 31
-    if m in (3, 5, 7, 10, 12):  # Mar, May, Jul, Oct, Dec - fixed 30
-        gap = 30
-    if m == 1:  # January: 31 every 4 years (year % 4 == 2)
-        gap = 31 if y % 4 == 2 else 30
-    if m == 2:  # February: compensates January (sum = 61)
-        jan_gap = 31 if y % 4 == 2 else 30
-        gap = 61 - jan_gap
-    if m == 4:  # April: 31 in leap billing-years
-        gap = 31 if is_leap else 30
-    if m == 6:  # June: 30 in leap billing-years
-        gap = 30 if is_leap else 31
-
-    return gap
+def _billing_cycle_get_gap(d: date) -> int:
+    """Return billing cycle gap for provided start date."""
+    gaps = {
+        1: 30,
+        2: 31,
+        3: 30,
+        5: 30,
+        7: 30,
+        8: 31,
+        9: 31,
+        10: 30,
+        11: 31,
+        12: 30,
+    }
+    m = d.month
+    if m in gaps:
+        return gaps[m]
+    near_leap = calendar.isleap(d.year) or calendar.isleap(d.year + 1)
+    if m == 4:
+        return 31 if near_leap else 30
+    if m == 6:
+        return 30 if near_leap else 31
+    return 30
 
 
 def _estimate_billing_cycles(
@@ -202,8 +196,8 @@ def _estimate_billing_cycles(
     earliest: date,
 ) -> list[tuple[date, date]]:
     """
-    Temporary algorithm for identifying billing cycle intervals
-    given current billing cycle.
+    Estimate billing cycle intervals given one known (current) billing cycle.
+    NOTE: this is a temporary algorithm.
 
     Args:
         anchor_start: Start date of the known (current) billing cycle.
@@ -215,31 +209,21 @@ def _estimate_billing_cycles(
         The last element is the anchor (current) cycle.
 
     """
-    # ── 1. Chain backward from anchor until we reach (or pass) earliest ──────
+    # --- walk backward from the anchor to *earliest* ---
     starts: list[date] = [anchor_start]
-    current = anchor_start
-    while current > earliest:
-        # Determine the previous month naively to get an approximate start,
-        # then walk backward exactly one gap from that approximation.
-        prev_m = current.month - 1 or 12
-        prev_y = current.year - (1 if current.month == 1 else 0)
-        # Use the 15th as a stable probe date to compute the gap for that month
-        probe = date(prev_y, prev_m, 15)
-        current = current - timedelta(days=_billing_cycle_gap(probe))
-        starts.append(current)
+    cur = anchor_start
+    while cur > earliest:
+        prev_month = cur.month - 1 or 12
+        prev_year = cur.year - (1 if cur.month == 1 else 0)
+        cur -= timedelta(days=_billing_cycle_get_gap(date(prev_year, prev_month, 1)))
+        starts.append(cur)
+    starts.reverse()
 
-    starts.reverse()  # oldest first
-
-    # ── 2. Build contiguous (start, end) pairs ────────────────────────────────
-    cycles: list[tuple[date, date]] = []
-    for i, cycle_start in enumerate(starts):
-        if i == len(starts) - 1:
-            # Anchor cycle - use the exact API-provided end date
-            cycles.append((cycle_start, anchor_end))
-        else:
-            cycle_end = starts[i + 1] - timedelta(days=1)
-            cycles.append((cycle_start, cycle_end))
-
+    # --- build (start, end) pairs; end = next_start - 1 ---
+    cycles = [
+        (starts[i], starts[i + 1] - timedelta(days=1)) for i in range(len(starts) - 1)
+    ]
+    cycles.append((anchor_start, anchor_end))
     return cycles
 
 
@@ -248,9 +232,9 @@ def _find_billing_cycle_for_date(
     billing_cycles: list[tuple[date, date]],
 ) -> tuple[date, date] | None:
     """Return the billing cycle that contains *target*, or ``None``."""
-    for cycle_start, cycle_end in billing_cycles:
-        if cycle_start <= target <= cycle_end:
-            return (cycle_start, cycle_end)
+    for start, end in billing_cycles:
+        if start <= target <= end:
+            return (start, end)
     return None
 
 

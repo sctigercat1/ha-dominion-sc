@@ -1,6 +1,6 @@
 [project]
 name = "ha-dominion-sc"
-version = "0.0.3"
+version = "0.0.4"
 description = "Home Assistant integration for Dominion Energy SC "
 readme = "README.md"
 requires-python = ">=3.13.2"
