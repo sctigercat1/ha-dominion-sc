@@ -232,8 +232,7 @@ def _estimate_billing_cycles(
     # --- walk forward past the anchor if *latest* is beyond the anchor end ---
     if latest is not None and latest > anchor_end:
         _LOGGER.debug(
-            "Forecast billing cycle (%s – %s) is stale; "
-            "projecting forward to cover %s",
+            "Forecast billing cycle (%s - %s) is stale; projecting forward to cover %s",
             anchor_start,
             anchor_end,
             latest,
