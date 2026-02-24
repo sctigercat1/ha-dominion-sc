@@ -29,6 +29,9 @@ CONF_EXTENDED_BACKFILL: Final = "extended_backfill"
 CONF_EXTENDED_COST_BACKFILL: Final = "extended_cost_backfill"
 EXTENDED_BACKFILL_DAYS: Final = 365
 
+# Lookback
+LOOKBACK_DAYS: Final = 5
+
 
 def clean_service_addr(service_addr_account_no: str) -> str:
     """Normalise a service-address / account number into a safe identifier fragment."""

@@ -47,6 +47,7 @@ from .const import (
     DEFAULT_FIXED_RATE,
     DOMAIN,
     EXTENDED_BACKFILL_DAYS,
+    LOOKBACK_DAYS,
     clean_service_addr,
 )
 from .rates import TIERED_RATE_REGISTRY, RateSchedule, calculate_sc_rate_interval_cost
@@ -612,23 +613,15 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
             data_date,
         )
 
-        # Check if we need to fetch new data
-        if last_stat_date >= data_date:
-            _LOGGER.debug(
-                "Statistics already up to date: last_stat_date=%s >= data_date=%s",
-                last_stat_date,
-                data_date,
-            )
-            # Update last_changed with existing data
-            last_changed_per_account[metadata.account] = last_stat_dt
-            return
+        # ── Determine the lookback window for gap detection ──────────────
+        # Look back LOOKBACK_DAYS from yesterday to catch late-arriving data
+        # from the API (e.g. a day that was skipped and reported later).
+        oldest_available = forecast.start_date
+        lookback_date = max(data_date - timedelta(days=LOOKBACK_DAYS), oldest_available)
 
-        # Fetch data from day after last stat to data_date
-        start_date = last_stat_date + timedelta(days=1)
-        # start_date = last_stat_date - timedelta(days=2)
-
-        # Limit max pull to BACKFILL_DAYS if very stale data
-        oldest_available = forecast.start_date  # today - timedelta(days=BACKFILL_DAYS)
+        # The fetch window covers whichever is earlier: the day after the
+        # last stat (for new data) or the lookback date (for gap filling).
+        start_date = min(last_stat_date + timedelta(days=1), lookback_date)
         if start_date < oldest_available:
             _LOGGER.warning(
                 "Statistics are very stale (last: %s). "
@@ -638,15 +631,88 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
             )
             start_date = oldest_available
 
+        # ── Query recorder for existing statistics in the window ─────────
+        # We need this both to detect gaps and to pass to the processing
+        # function so it can skip already-recorded hours.
+        tz = await dt_util.async_get_time_zone(self.api.get_timezone())
+        lookback_start_dt = datetime.combine(start_date, datetime.min.time()).replace(
+            tzinfo=tz
+        )
+        lookback_end_dt = datetime.combine(
+            data_date + timedelta(days=1), datetime.min.time()
+        ).replace(tzinfo=tz)
+
+        existing_rows: list[dict] = (
+            await get_instance(self.hass).async_add_executor_job(
+                statistics_during_period,
+                self.hass,
+                lookback_start_dt,
+                lookback_end_dt,
+                {metadata.consumption_id},
+                "hour",
+                None,
+                {"start"},
+            )
+        ).get(metadata.consumption_id, [])
+
+        existing_hours: set[datetime] = set()
+        for row in existing_rows:
+            ts = row["start"]
+            if isinstance(ts, (int, float)):
+                existing_hours.add(datetime.fromtimestamp(ts, tz=dt_util.UTC))
+            else:
+                existing_hours.add(ts)
+
+        # ── Check whether there is anything to fetch ─────────────────────
+        # Build the set of dates we expect to have data for in the window.
+        expected_dates: set[date] = set()
+        d = start_date
+        while d <= data_date:
+            expected_dates.add(d)
+            d += timedelta(days=1)
+
+        # Dates already fully covered in the recorder (at least 1 hour present).
+        covered_dates: set[date] = set()
+        for h in existing_hours:
+            local_h = h.astimezone(tz) if tz else h
+            covered_dates.add(local_h.date())
+
+        missing_dates = expected_dates - covered_dates
+        has_new_days = last_stat_date < data_date
+
+        if not has_new_days and not missing_dates:
+            _LOGGER.debug(
+                "Statistics up to date and no gaps found in lookback window "
+                "(%s to %s, %d hours recorded)",
+                start_date,
+                data_date,
+                len(existing_hours),
+            )
+            last_changed_per_account[metadata.account] = last_stat_dt
+            return
+
+        if missing_dates:
+            _LOGGER.info(
+                "Detected %d missing date(s) in lookback window: %s",
+                len(missing_dates),
+                sorted(missing_dates),
+            )
+
         _LOGGER.info(
-            "Fetching statistics update from %s to %s (consumption_sum=%.3f%s)",
+            "Fetching statistics update from %s to %s "
+            "(lookback=%d days, existing_hours=%d, missing_dates=%d, "
+            "consumption_sum=%.3f%s)",
             start_date,
             data_date,
+            (data_date - start_date).days,
+            len(existing_hours),
+            len(missing_dates),
             consumption_sum,
             f", cost_sum={cost_sum:.3f}" if metadata.cost_id else "",
         )
 
-        # Call the common processing function
+        # Call the common processing function, passing existing hours
+        # so it can skip already-recorded intervals.
         await self._process_and_insert_statistics(
             metadata=metadata,
             start_date=start_date,
@@ -656,7 +722,106 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
             last_stat_dt=last_stat_dt,
             last_changed_per_account=last_changed_per_account,
             forecast=forecast,
+            existing_hours=existing_hours,
         )
+
+    def _aggregate_hourly_data(
+        self,
+        usage_reads: list,
+        metadata: DominionSCStatisticMetadata,
+        forecast: Forecast | None,
+        start_date: date,
+        is_electric: bool,
+        cost_start_date: date | None = None,
+        existing_hours: set[datetime] | None = None,
+    ) -> tuple[dict[datetime, float], dict[datetime, float]]:
+        """
+        Aggregate usage-read intervals into hourly consumption and cost buckets.
+
+        Handles billing-cycle boundary resets for tiered rates, skips hours
+        already present in ``existing_hours``, and respects
+        ``cost_start_date`` for extended-backfill scenarios.
+
+        Returns:
+            (hourly_consumption, hourly_cost) dictionaries keyed by hour start.
+
+        """
+        cost_mode_here, fixed_rate_here, rate_schedule_here = _resolve_cost_config(
+            self.config_entry.options
+        )
+        is_tiered_rate = cost_mode_here in TIERED_RATE_REGISTRY
+        cumulative_wh = 0.0
+
+        billing_cycles: list[tuple[date, date]] = []
+        if is_tiered_rate:
+            today = date.today()
+            billing_cycles = _estimate_billing_cycles(
+                anchor_start=forecast.start_date,
+                anchor_end=forecast.end_date,
+                earliest=start_date,
+                latest=today,
+            )
+            _LOGGER.debug(
+                "Estimated %d billing cycles from %s to %s for tier tracking",
+                len(billing_cycles),
+                billing_cycles[0][0] if billing_cycles else "?",
+                billing_cycles[-1][1] if billing_cycles else "?",
+            )
+
+        current_cycle: tuple[date, date] | None = None
+        hourly_consumption: dict[datetime, float] = {}
+        hourly_cost: dict[datetime, float] = {}
+
+        for usage_read in sorted(usage_reads, key=lambda i: i.start_time):
+            interval_date = usage_read.start_time.date()
+            hour_start = usage_read.start_time.replace(
+                minute=0, second=0, microsecond=0
+            )
+
+            # For tiered rates, always track billing cycle boundaries
+            # even for already-recorded hours so cumulative_wh is correct.
+            if is_electric and metadata.cost_id:
+                if is_tiered_rate and billing_cycles:
+                    row_cycle = _find_billing_cycle_for_date(
+                        interval_date, billing_cycles
+                    )
+                    if row_cycle != current_cycle:
+                        current_cycle = row_cycle
+                        cumulative_wh = 0.0
+
+            # Skip hours that already have recorded statistics — we still
+            # need to accumulate cumulative_wh above so tier boundaries
+            # stay correct, but we don't re-emit these hours.
+            if existing_hours and hour_start in existing_hours:
+                cumulative_wh += usage_read.consumption
+                continue
+
+            if hour_start not in hourly_consumption:
+                hourly_consumption[hour_start] = 0.0
+            hourly_consumption[hour_start] += usage_read.consumption
+
+            # Calculate cost for electric accounts with cost tracking
+            if is_electric and metadata.cost_id:
+                # Skip cost for intervals before cost_start_date when set
+                # (e.g. extended consumption backfill without extended cost)
+                if cost_start_date is not None and interval_date < cost_start_date:
+                    cumulative_wh += usage_read.consumption
+                    continue
+
+                if hour_start not in hourly_cost:
+                    hourly_cost[hour_start] = 0.0
+
+                hourly_cost[hour_start] += _calculate_cost_for_wh(
+                    usage_read.consumption,
+                    usage_read.start_time,
+                    cumulative_wh,
+                    cost_mode_here,
+                    fixed_rate_here,
+                    rate_schedule_here,
+                )
+                cumulative_wh += usage_read.consumption
+
+        return hourly_consumption, hourly_cost
 
     async def _process_and_insert_statistics(
         self,
@@ -669,10 +834,15 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
         last_changed_per_account: dict[str, datetime],
         forecast: Forecast | None,
         cost_start_date: date | None = None,
+        existing_hours: set[datetime] | None = None,
     ) -> None:
         """
         Process usage data and insert statistics.
         Common logic for backfill and updates.
+
+        When ``existing_hours`` is provided (incremental updates with lookback),
+        intervals whose hour bucket is already in the recorder are skipped so
+        that only newly-available data (gap fills) is inserted.
         """
         # Convert dates to datetimes for API call
         tz = await dt_util.async_get_time_zone(self.api.get_timezone())
@@ -735,78 +905,17 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
 
         _LOGGER.debug("Received %d intervals for statistics", len(usage_reads))
 
-        # Group intervals by hour for hourly statistics
-        # For electric accounts with cost tracking, also calculate costs
+        # Aggregate intervals into hourly buckets for consumption and cost
         is_electric = metadata.account == "ELECTRIC"
-        cost_mode_here, fixed_rate_here, rate_schedule_here = _resolve_cost_config(
-            self.config_entry.options
+        hourly_consumption, hourly_cost = self._aggregate_hourly_data(
+            usage_reads=usage_reads,
+            metadata=metadata,
+            forecast=forecast,
+            start_date=start_date,
+            is_electric=is_electric,
+            cost_start_date=cost_start_date,
+            existing_hours=existing_hours,
         )
-        is_tiered_rate = cost_mode_here in TIERED_RATE_REGISTRY
-        cumulative_wh = 0.0
-
-        billing_cycles: list[tuple[date, date]] = []
-        if is_tiered_rate:
-            today = date.today()
-            billing_cycles = _estimate_billing_cycles(
-                anchor_start=forecast.start_date,
-                anchor_end=forecast.end_date,
-                earliest=start_date,
-                latest=today,
-            )
-            _LOGGER.debug(
-                "Estimated %d billing cycles from %s to %s for tier tracking",
-                len(billing_cycles),
-                billing_cycles[0][0] if billing_cycles else "?",
-                billing_cycles[-1][1] if billing_cycles else "?",
-            )
-
-        current_cycle: tuple[date, date] | None = None
-
-        hourly_consumption: dict[datetime, float] = {}
-        hourly_cost: dict[datetime, float] = {}
-
-        for usage_read in sorted(usage_reads, key=lambda i: i.start_time):
-            interval_date = usage_read.start_time.date()
-
-            hour_start = usage_read.start_time.replace(
-                minute=0, second=0, microsecond=0
-            )
-            if hour_start not in hourly_consumption:
-                hourly_consumption[hour_start] = 0.0
-
-            hourly_consumption[hour_start] += usage_read.consumption
-
-            # Calculate cost for electric accounts with cost tracking
-            if is_electric and metadata.cost_id:
-                # Skip cost for intervals before cost_start_date when set
-                # (e.g. extended consumption backfill without extended cost)
-                if cost_start_date is not None and interval_date < cost_start_date:
-                    cumulative_wh += usage_read.consumption
-                    continue
-
-                # For tiered rates, reset cumulative Wh at billing cycle
-                # boundaries so the tier threshold is applied per-cycle.
-                if is_tiered_rate and billing_cycles:
-                    row_cycle = _find_billing_cycle_for_date(
-                        interval_date, billing_cycles
-                    )
-                    if row_cycle != current_cycle:
-                        current_cycle = row_cycle
-                        cumulative_wh = 0.0
-
-                if hour_start not in hourly_cost:
-                    hourly_cost[hour_start] = 0.0
-
-                hourly_cost[hour_start] += _calculate_cost_for_wh(
-                    usage_read.consumption,
-                    usage_read.start_time,
-                    cumulative_wh,
-                    cost_mode_here,
-                    fixed_rate_here,
-                    rate_schedule_here,
-                )
-
-                cumulative_wh += usage_read.consumption
 
         # Build statistics with cumulative sums
         consumption_statistics: list[StatisticData] = []
@@ -829,7 +938,21 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
                     )
 
         if not consumption_statistics:
+            _LOGGER.debug(
+                "No new statistics to insert for %s "
+                "(all hours may already be recorded)",
+                metadata.consumption_id,
+            )
+            if last_stat_dt:
+                last_changed_per_account[metadata.account] = last_stat_dt
             return
+
+        if existing_hours:
+            _LOGGER.info(
+                "Gap-fill: inserting %d newly-available hours for %s",
+                len(consumption_statistics),
+                metadata.consumption_id,
+            )
 
         # Update last_changed with the latest interval time
         last_changed_per_account[metadata.account] = usage_reads[-1].end_time
