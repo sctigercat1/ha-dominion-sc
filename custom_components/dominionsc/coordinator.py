@@ -194,6 +194,7 @@ def _estimate_billing_cycles(
     anchor_start: date,
     anchor_end: date,
     earliest: date,
+    latest: date | None = None,
 ) -> list[tuple[date, date]]:
     """
     Estimate billing cycle intervals given one known (current) billing cycle.
@@ -203,10 +204,13 @@ def _estimate_billing_cycles(
         anchor_start: Start date of the known (current) billing cycle.
         anchor_end:   End date of the known (current) billing cycle.
         earliest:     Generate cycles back to (at least) this date.
+        latest:       If provided, generate cycles forward to (at least)
+                      this date.  This handles the case where the forecast
+                      billing cycle hasn't been updated yet and today is
+                      past the anchor end date.
 
     Returns:
         List of (start_date, end_date) tuples, ordered oldest-first.
-        The last element is the anchor (current) cycle.
 
     """
     # --- walk backward from the anchor to *earliest* ---
@@ -224,6 +228,23 @@ def _estimate_billing_cycles(
         (starts[i], starts[i + 1] - timedelta(days=1)) for i in range(len(starts) - 1)
     ]
     cycles.append((anchor_start, anchor_end))
+
+    # --- walk forward past the anchor if *latest* is beyond the anchor end ---
+    if latest is not None and latest > anchor_end:
+        _LOGGER.debug(
+            "Forecast billing cycle (%s – %s) is stale; "
+            "projecting forward to cover %s",
+            anchor_start,
+            anchor_end,
+            latest,
+        )
+        cur = anchor_end + timedelta(days=1)  # next cycle starts day after anchor ends
+        while cur <= latest:
+            gap = _billing_cycle_get_gap(cur)
+            cycle_end = cur + timedelta(days=gap - 1)
+            cycles.append((cur, cycle_end))
+            cur = cycle_end + timedelta(days=1)
+
     return cycles
 
 
@@ -726,10 +747,12 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
 
         billing_cycles: list[tuple[date, date]] = []
         if is_tiered_rate:
+            today = date.today()
             billing_cycles = _estimate_billing_cycles(
                 anchor_start=forecast.start_date,
                 anchor_end=forecast.end_date,
                 earliest=start_date,
+                latest=today,
             )
             _LOGGER.debug(
                 "Estimated %d billing cycles from %s to %s for tier tracking",
@@ -920,6 +943,7 @@ class DominionSCCoordinator(DataUpdateCoordinator[DominionSCData]):
                 forecast.start_date,
                 forecast.end_date,
                 start_date,
+                latest=end_date,
             )
 
         # ── 3. Fetch consumption rows ─────────────────────────────────────────────
